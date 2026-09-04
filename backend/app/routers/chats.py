@@ -18,6 +18,8 @@ from app.db import Session
 from app.deps import SessionDep, SettingsDep, UserDep
 from app.models import Chat, Document, Message
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/api/chats", tags=["chats"])
 
 
@@ -153,6 +155,14 @@ async def _stream(
     history: list[Message],
     documents: list[tuple[uuid.UUID, str]],
 ) -> AsyncIterator[str]:
+    """Relay the agent's events as SSE, saving the answer however the turn ends.
+
+    The save sits in ``finally`` because a closed browser tab does not raise
+    ``Exception`` — Starlette throws ``GeneratorExit`` into this generator, and
+    an ``except Exception`` around the loop would let the tokens already
+    produced disappear. Awaiting during ``aclose()`` is allowed; yielding is
+    not, which is why the ``done`` event stays outside.
+    """
     parts: list[str] = []
     citations: list[dict[str, Any]] = []
     try:
@@ -163,27 +173,32 @@ async def _stream(
             elif kind == "citations":
                 citations = payload
                 yield _sse("citations", payload)
-    except Exception as exc:
+    except Exception:
         # The client must learn the turn failed; a bare 500 mid-stream would
-        # just look like the answer stopped.
-        logging.exception("agent run failed for chat %s", chat_id)
-        yield _sse("error", str(exc))
+        # just look like the answer stopped. The reason goes to the log, not
+        # over the wire: an httpx or driver error carries internal hosts and
+        # keys in its text.
+        logger.exception("agent run failed for chat %s", chat_id)
+        yield _sse("error", "Не удалось получить ответ. Попробуйте ещё раз.")
+    finally:
+        await _save_answer(chat_id, "".join(parts), citations)
 
-    answer_text = "".join(parts)
-    if answer_text:
-        # Persist whatever was produced, even on a partial failure, so the
-        # conversation is never silently lost.
+    yield _sse("done", {"citations": citations})
+
+
+async def _save_answer(chat_id: uuid.UUID, text: str, citations: list[dict[str, Any]]) -> None:
+    """Keep whatever was produced — a partial answer beats a lost turn."""
+    if not text:
+        return
+    try:
         async with Session() as session:
             session.add(
-                Message(
-                    chat_id=chat_id,
-                    role="assistant",
-                    content=answer_text,
-                    citations=citations,
-                )
+                Message(chat_id=chat_id, role="assistant", content=text, citations=citations)
             )
             await session.commit()
-    yield _sse("done", {"citations": citations})
+    except Exception:
+        # Never let a write failure replace the answer the user is reading.
+        logger.exception("could not save the answer for chat %s", chat_id)
 
 
 async def _owned_chat(session: AsyncSession, user_id: uuid.UUID, chat_id: uuid.UUID) -> Chat:

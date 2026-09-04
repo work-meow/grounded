@@ -41,12 +41,25 @@ from rag_indexer.parsers import parse_document
 logger = logging.getLogger(__name__)
 
 
-#: Lines Pathway emits on every engine tick. They say the same thing whether or
-#: not anything changed, and there are now ten ticks a second (see
-#: COMMIT_INTERVAL_MS), so together they produce about a thousand lines a minute
-#: — roughly a hundred megabytes a day into a log capped at thirty, which would
-#: leave a few hours of history and bury every event worth reading.
-_TICK_NOISE = ("pending download tasks", "Persisting a chunk of")
+#: Lines Pathway emits on every engine tick, each saying the same thing whether
+#: or not anything changed. There are ten ticks a second now (see
+#: COMMIT_INTERVAL_MS), so unfiltered they came to a thousand lines a minute —
+#: about a hundred megabytes a day into a log capped at thirty, which is a few
+#: hours of history and no room for anything worth reading.
+#:
+#: Note what is *not* here: "N entries have been sent to the engine" for a
+#: non-zero N. That line is how you tell a connector re-read one changed
+#: document rather than all of them, which is worth the space. Only the zero
+#: case goes.
+_TICK_NOISE = (
+    "pending download tasks",
+    "Persisting a chunk of",
+    "0 entries (",
+    "save metas",
+    "Preparing commit",
+    "Running garbage collection",
+    "Garbage collect",
+)
 
 
 class _DropPollingNoise(logging.Filter):

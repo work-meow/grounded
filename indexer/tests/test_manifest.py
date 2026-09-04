@@ -145,3 +145,31 @@ def test_a_deployment_without_a_key_does_not_watch_the_manifest():
         loaded = manifest.load(IndexerSettings(openrouter_api_key="x", secrets_key=key))
         assert loaded.specs == []
         assert not loaded.watched
+
+
+def test_the_log_keeps_what_matters_and_drops_the_ticking():
+    """The engine ticks ten times a second; the log has to survive that.
+
+    Filtering by substring is easy to overdo. The line that says a connector
+    re-read *some* documents is how you tell an incremental update from a full
+    one, so only the zero case goes.
+    """
+    import logging
+
+    from rag_indexer.pipeline import _DropPollingNoise
+
+    keep = _DropPollingNoise().filter
+
+    def record(message: str) -> logging.LogRecord:
+        return logging.LogRecord("pathway", logging.INFO, "", 0, message, None, None)
+
+    assert keep(record("notion-abc: 2 entries (396 minibatch(es)) have been sent to the engine"))
+    assert keep(record("connected notion source 'Workspace' (abc)"))
+    assert keep(record("could not be listed; keeping the last snapshot"))
+    assert keep(record("indexer listening on http://0.0.0.0:8666"))
+
+    assert not keep(record("S3(users/): 0 entries (4 minibatch(es)) have been sent to the engine"))
+    assert not keep(record("Persisting a chunk of 9 entries (348 -> 87 bytes)"))
+    assert not keep(record("save metas"))
+    assert not keep(record("Garbage collect"))
+    assert not keep(record("2 pending download tasks"))

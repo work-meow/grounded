@@ -2083,6 +2083,10 @@ name = "rag-indexer"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "botocore" },
+    { name = "google-api-python-client" },
+    { name = "google-auth" },
+    { name = "httpx" },
     { name = "langchain-text-splitters" },
     { name = "openai" },
     { name = "openpyxl" },
@@ -2104,6 +2108,10 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "botocore", specifier = ">=1.40" },
+    { name = "google-api-python-client", specifier = ">=2.100" },
+    { name = "google-auth", specifier = ">=2.30" },
+    { name = "httpx", specifier = ">=0.28" },
     { name = "langchain-text-splitters", specifier = ">=0.3" },
     { name = "openai", specifier = "~=1.60" },
     { name = "openpyxl", specifier = ">=3.1" },
@@ -2127,6 +2135,12 @@ dev = [
 name = "rag-shared"
 version = "0.1.0"
 source = { editable = "../shared" }
+dependencies = [
+    { name = "cryptography" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "cryptography", specifier = ">=44" }]
 
 [[package]]
 name = "regex"

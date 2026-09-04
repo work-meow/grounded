@@ -1,7 +1,7 @@
 [project]
 name = "rag-indexer"
 version = "0.1.0"
-description = "Pathway live index: S3 -> parse -> chunk -> embed -> hybrid retrieval"
+description = "Pathway live index: uploads and connected sources -> parse -> chunk -> embed -> hybrid retrieval"
 # Pathway ships abi3 wheels, but 3.13 is the interpreter this dependency set is
 # actually exercised on, here and in CI. Nothing in the tree needs 3.14.
 requires-python = ">=3.13,<3.14"
@@ -34,6 +34,14 @@ dependencies = [
     "python-pptx>=1.0",
     "openpyxl>=3.1",
     "pydantic-settings>=2.11",
+    # Connected sources (rag_indexer/connectors/). Google's client is what
+    # pw.io.gdrive imports; httpx and botocore are already in the tree via
+    # openai and pathway, and are named here because this code calls them
+    # directly rather than through the packages that brought them.
+    "google-api-python-client>=2.100",
+    "google-auth>=2.30",
+    "httpx>=0.28",
+    "botocore>=1.40",
 ]
 
 [dependency-groups]

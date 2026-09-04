@@ -10,9 +10,13 @@ is imported by both. Keep it stdlib-only.
 """
 
 import re
-from uuid import UUID
+from uuid import UUID, uuid5
 
 PREFIX = "users"
+
+# Fixed for the life of the deployment: it seeds every connector document id,
+# so changing it would orphan every citation ever written.
+_CONNECTOR_NAMESPACE = UUID("ed0531a7-2185-40a8-9b90-7ac3d0ed7c14")
 _KEY_RE = re.compile(
     r"^users/(?P<user_id>[0-9a-f-]{36})"
     r"/sources/(?P<source_id>[0-9a-f-]{36})"
@@ -59,3 +63,18 @@ def tenant_metadata(text: str, metadata: dict) -> tuple[str, dict]:
         # same metadata shape as one inside it and satisfies no filter.
         return text, {**metadata, **dict.fromkeys(_KEY_RE.groupindex)}
     return text, {**metadata, **parsed}
+
+
+def document_id_for(source_id: UUID, external_id: str) -> UUID:
+    """A stable document id for a file we did not create.
+
+    Derived rather than stored: the indexer has no database, and this id has to
+    come out the same on every restart. If it did not, a restart would re-key an
+    entire connected source and every citation already written into a chat would
+    stop resolving.
+
+    ``source_id`` is in the input so that the same Drive file reached through two
+    different connected sources is two documents, which is what the key layout
+    says — one document belongs to exactly one source.
+    """
+    return uuid5(_CONNECTOR_NAMESPACE, f"{source_id}:{external_id}")

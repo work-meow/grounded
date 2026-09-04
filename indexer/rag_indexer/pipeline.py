@@ -1,14 +1,20 @@
 """The live index.
 
-    S3 (streaming)  ->  parse  ->  tenant metadata  ->  chunk  ->  embed
-                                                                    |
-                                          usearch KNN  +  tantivy BM25
-                                                    \\    /
-                                                     RRF          -> /v1/retrieve
+    uploads (S3)  \\
+    Google Drive   \\
+    Notion          >-  parse  ->  tenant metadata  ->  chunk  ->  embed
+    Dropbox        //                                               |
+    OneDrive      //                     usearch KNN  +  tantivy BM25
+    Яндекс.Диск  //                                \\    /
+                                                    RRF        -> /v1/retrieve
 
-Run it with ``uv run python -m rag_indexer.pipeline``. Pathway keeps watching the
-bucket, so a newly uploaded file becomes searchable without restarting anything,
-and a deleted object drops out of the index on its own.
+Run it with ``uv run python -m rag_indexer.pipeline``. Every input is streaming:
+a file that appears, changes or disappears at any of those sources is reflected
+in the index without anything being restarted or re-indexed by hand.
+
+The one thing that *does* need a restart is the source list itself, because a
+Pathway graph is fixed once built. :mod:`rag_indexer.manifest` watches for that
+and restarts the process; :mod:`rag_indexer.connectors` explains the rest.
 """
 
 import logging
@@ -24,9 +30,12 @@ from pathway.xpacks.llm.document_store import DocumentStore
 from pathway.xpacks.llm.embedders import OpenAIEmbedder
 from pathway.xpacks.llm.servers import DocumentStoreServer
 from pathway.xpacks.llm.splitters import RecursiveSplitter
-from rag_shared.doc_key import PREFIX, tenant_metadata
+from rag_shared.connectors import ConnectorSpec
+from rag_shared.doc_key import tenant_metadata
 
+from rag_indexer import manifest
 from rag_indexer.config import IndexerSettings
+from rag_indexer.connectors import build_tables
 from rag_indexer.parsers import parse_document
 
 logger = logging.getLogger(__name__)
@@ -60,29 +69,13 @@ def configure_logging(level: str) -> None:
         handler.addFilter(_DropPollingNoise())
 
 
-def build_store(settings: IndexerSettings) -> DocumentStore:
+def build_store(settings: IndexerSettings, specs: list[ConnectorSpec]) -> DocumentStore:
     # Must happen before the embedder is constructed: Pathway builds the OpenAI
     # client itself and never forwards a base URL, so this env var is the only
     # way to reach an OpenAI-compatible endpoint. Setting it here rather than in
     # main() means no caller can get the ordering wrong and silently embed
     # against api.openai.com.
     os.environ["OPENAI_BASE_URL"] = settings.openrouter_base_url
-
-    files = pw.io.s3.read(
-        # Only our own prefix; anything else in the bucket is ignored.
-        path=f"{PREFIX}/",
-        format="binary",
-        mode="streaming",
-        with_metadata=True,
-        aws_s3_settings=pw.io.s3.AwsS3Settings(
-            bucket_name=settings.s3_bucket,
-            access_key=settings.s3_access_key_id,
-            secret_access_key=settings.s3_secret_access_key,
-            region=settings.s3_region,
-            endpoint=settings.s3_endpoint_url,
-            with_path_style=settings.s3_path_style,
-        ),
-    )
 
     embedder = OpenAIEmbedder(
         model=settings.embedding_model,
@@ -104,7 +97,10 @@ def build_store(settings: IndexerSettings) -> DocumentStore:
     )
 
     return DocumentStore(
-        docs=files,
+        # One list, concatenated by DocumentStore: every source shares the same
+        # parser, splitter and index, and differs only in where its bytes and
+        # its metadata came from.
+        docs=build_tables(settings, specs),
         retriever_factory=retriever_factory,
         parser=pw.udf(parse_document),
         # Recursive, not TokenCount: it splits on paragraph and sentence
@@ -124,11 +120,19 @@ def main() -> None:
     settings = IndexerSettings()  # type: ignore[call-arg]
     configure_logging(settings.log_level)
 
+    sources = manifest.load(settings)
+    logger.info("indexing uploads and %d connected source(s)", len(sources.specs))
+
     # Building the store probes the embedder once to learn its dimension, so a
     # bad key or an unreachable endpoint fails loudly here rather than on the
     # first upload.
-    store = build_store(settings)
+    store = build_store(settings, sources.specs)
     server = DocumentStoreServer(settings.host, settings.port, store)
+
+    # Started only once the graph is built, so that a source added while the
+    # index was still starting restarts a process that is actually running.
+    manifest.watch(settings, sources.etag)
+
     logger.info("indexer listening on http://%s:%s", settings.host, settings.port)
     server.run(
         with_cache=True,

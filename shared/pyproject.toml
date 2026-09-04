@@ -1,11 +1,16 @@
 [project]
 name = "rag-shared"
 version = "0.1.0"
-description = "The S3 key layout, shared by the API and the indexer"
+description = "The key layout, the connector manifest and the credential seal, shared by the API and the indexer"
 requires-python = ">=3.13,<3.14"
 # Stdlib only, deliberately: this is installed into two virtualenvs whose
 # dependency trees are incompatible with each other.
-dependencies = []
+dependencies = [
+    # The one exception to the rule above, and only because both processes must
+    # agree byte-for-byte on how a credential is sealed (see crypto.py). It is a
+    # leaf dependency with no transitive tree to collide with either venv.
+    "cryptography>=44",
+]
 
 [tool.ruff]
 line-length = 100

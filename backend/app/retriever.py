@@ -12,7 +12,7 @@ from uuid import UUID
 import httpx
 
 from app.config import Settings
-from shared.doc_key import parse_key
+from shared.doc_key import parse_key, user_prefix
 
 _client: httpx.AsyncClient | None = None
 
@@ -84,27 +84,37 @@ async def retrieve(
     return [Chunk.from_hit(hit) for hit in response.json()]
 
 
-async def indexed_document_ids(settings: Settings, user_id: UUID) -> dict[str, int]:
-    """document_id -> number of indexed chunks, for the user's files.
+async def ready_document_ids(settings: Settings, user_id: UUID) -> set[str]:
+    """The user's documents that Pathway has finished indexing.
 
     This is the source of truth for "is it ready yet?". Nothing about indexing
     state is mirrored into Postgres, so the two can never disagree.
+
+    Two Pathway details shape this request:
+
+    * ``/v1/inputs`` reports *file*-level metadata taken from the connector, so
+      it carries only ``path`` — the ``user_id`` the post-processor puts on each
+      chunk is not there. Ownership therefore has to come from the key.
+    * The endpoint filters the metadata list but zips the statuses against the
+      *unfiltered* one, so asking it to filter would misalign every status.
+
+    ponytail: hence we fetch every file and match the prefix here. Ceiling:
+    O(all files in the bucket) per call, fine for a personal install. Upgrade
+    path: filter server-side once Pathway aligns the two lists.
     """
     response = await _http().post(
         f"{settings.pathway_url}/v1/inputs",
-        json={"metadata_filter": _tenant_filter(user_id)},
+        json={"return_status": True},
         timeout=settings.pathway_timeout_s,
     )
     response.raise_for_status()
 
-    counts: dict[str, int] = {}
+    prefix = user_prefix(user_id)
+    ready: set[str] = set()
     for entry in response.json():
-        # /v1/inputs returns one record per indexed chunk's source document;
-        # fall back to the raw path when the post-processor metadata is absent.
-        document_id = entry.get("document_id")
-        if document_id is None and (path := entry.get("path")):
-            parsed = parse_key(str(path))
-            document_id = parsed["document_id"] if parsed else None
-        if document_id:
-            counts[document_id] = counts.get(document_id, 0) + 1
-    return counts
+        path = str(entry.get("path", ""))
+        if not path.startswith(prefix) or entry.get("_indexing_status") != "INDEXED":
+            continue
+        if parsed := parse_key(path):
+            ready.add(parsed["document_id"])
+    return ready

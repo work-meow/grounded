@@ -35,7 +35,6 @@ class DocumentOut(BaseModel):
     size_bytes: int
     created_at: datetime
     status: str  # "processing" | "ready"
-    chunks: int
 
 
 async def _files_source(session: SessionDep, user_id: uuid.UUID) -> Source:
@@ -52,13 +51,16 @@ async def _files_source(session: SessionDep, user_id: uuid.UUID) -> Source:
     return source
 
 
-async def _chunk_counts(settings: Settings, user_id: uuid.UUID) -> dict[str, int] | None:
-    """Live indexing state, or None when the indexer is unreachable."""
+async def _ready_ids(settings: Settings, user_id: uuid.UUID) -> set[str]:
+    """Live indexing state; an empty set when the indexer is unreachable.
+
+    A down indexer must not take the file list down with it — the files simply
+    read as still processing, which is also what the user would do about it.
+    """
     try:
-        return await retriever.indexed_document_ids(settings, user_id)
+        return await retriever.ready_document_ids(settings, user_id)
     except (httpx.HTTPError, ValueError):
-        # A down indexer must not take the file list down with it.
-        return None
+        return set()
 
 
 @router.get("")
@@ -77,7 +79,7 @@ async def list_documents(
         .all()
     )
 
-    counts = await _chunk_counts(settings, user_id)
+    ready = await _ready_ids(settings, user_id)
     return [
         DocumentOut(
             id=doc.id,
@@ -85,8 +87,7 @@ async def list_documents(
             mime_type=doc.mime_type,
             size_bytes=doc.size_bytes,
             created_at=doc.created_at,
-            status="ready" if counts and counts.get(str(doc.id)) else "processing",
-            chunks=(counts or {}).get(str(doc.id), 0),
+            status="ready" if str(doc.id) in ready else "processing",
         )
         for doc in rows
     ]
@@ -146,7 +147,6 @@ async def upload(
         size_bytes=document.size_bytes,
         created_at=document.created_at,
         status="processing",
-        chunks=0,
     )
 
 

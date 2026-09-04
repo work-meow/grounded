@@ -60,7 +60,6 @@ export type DocumentOut = {
   size_bytes: number;
   created_at: string;
   status: "processing" | "ready";
-  chunks: number;
 };
 
 export type ChatOut = { id: string; title: string; created_at: string };

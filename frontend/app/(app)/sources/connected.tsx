@@ -100,6 +100,16 @@ const CATALOGUE: Record<ConnectorKind, Presentation> = {
 
 const KINDS = Object.keys(CATALOGUE) as ConnectorKind[];
 
+/**
+ * Drive is the one kind that needs setting up on the server: the service
+ * account key lives in the indexer, and its address is what a user shares a
+ * folder with. Without that address there is nothing to tell them to share
+ * with, so the option is not offered — the API refuses it for the same reason.
+ */
+function offered(serviceAccount: string): ConnectorKind[] {
+  return serviceAccount ? KINDS : KINDS.filter((kind) => kind !== "gdrive");
+}
+
 /** A field whose value is a credential is not typed in plain sight. */
 function isSecret(field: string): boolean {
   return /secret|token|key/.test(field);
@@ -183,7 +193,7 @@ export function ConnectedSources({ onChanged }: { onChanged: () => void }) {
           />
         ) : (
           <div className="flex flex-wrap gap-2">
-            {KINDS.map((kind) => {
+            {offered(state.gdrive_service_account_email).map((kind) => {
               const { label, icon: Icon } = CATALOGUE[kind];
               return (
                 <Button key={kind} variant="outline" size="sm" onClick={() => setAdding(kind)}>

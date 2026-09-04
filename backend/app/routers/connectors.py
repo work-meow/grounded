@@ -89,6 +89,16 @@ async def add_connector(
             "Подключение источников не настроено на этом сервере",
         )
 
+    # Drive is the one kind the deployment has to have set up: the key lives in
+    # the indexer, and this address is what a user shares their folder with.
+    # Without it the source would be accepted, never index anything, and give
+    # nobody a reason why.
+    if body.kind is Kind.GDRIVE and not settings.gdrive_service_account_email:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "Google Drive не настроен на этом сервере",
+        )
+
     used = await session.scalar(
         select(func.count())
         .select_from(Source)

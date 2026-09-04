@@ -39,8 +39,16 @@ import {
 type Presentation = {
   label: string;
   icon: LucideIcon;
-  /** How to obtain the credential. `email` is the service account to share with. */
-  help: (email: string) => string;
+  /**
+   * How to obtain the credential, one step per line. `email` is the service
+   * account a Drive folder is shared with.
+   *
+   * Written out in full rather than summarised. Three of these five services
+   * hand out a refresh token exactly once, in a browser redirect, and a hint
+   * that stops at "create an app" leaves someone holding a client id and no
+   * way to turn it into anything.
+   */
+  steps: (email: string) => string[];
   labels: Record<string, string>;
   placeholders?: Record<string, string>;
 };
@@ -49,32 +57,47 @@ const CATALOGUE: Record<ConnectorKind, Presentation> = {
   gdrive: {
     label: "Google Drive",
     icon: HardDrive,
-    help: (email) =>
-      `Откройте папку в Drive → «Поделиться» → добавьте ${email || "адрес сервисного аккаунта"} с правом «Читатель». ID папки — это часть ссылки после /folders/.`,
+    steps: (email) => [
+      "Создайте папку в своём Google Drive и положите в неё документы.",
+      `Правой кнопкой по папке → «Открыть доступ» → добавьте ${email || "адрес сервисного аккаунта"} с правом «Читатель».`,
+      "Откройте папку и скопируйте ID из адресной строки — это часть после /folders/.",
+    ],
     labels: { folder_id: "ID папки" },
     placeholders: { folder_id: "1AbCdEfGhIjKlMnOpQrStUvWxYz" },
   },
   notion: {
     label: "Notion",
     icon: NotebookPen,
-    help: () =>
-      "notion.so/my-integrations → «New integration» → скопируйте Internal Integration Secret. Затем на каждой нужной странице: «⋯» → Connections → выберите интеграцию. Читаются только те страницы, которые вы подключили.",
+    steps: () => [
+      "notion.so/my-integrations → «New integration» → выберите workspace.",
+      "Скопируйте Internal Integration Secret.",
+      "На каждой нужной странице: «⋯» → Connections → выберите интеграцию. Читается только то, что вы подключили явно.",
+    ],
     labels: { token: "Integration Secret" },
     placeholders: { token: "ntn_..." },
   },
   yandex: {
     label: "Яндекс.Диск",
     icon: Cloud,
-    help: () =>
-      "oauth.yandex.ru → создайте приложение с правом «Чтение всего Диска» → получите OAuth-токен.",
+    steps: () => [
+      "oauth.yandex.ru/client/new → создайте приложение с правом «Чтение всего Диска» (cloud_api:disk.read).",
+      "Скопируйте ClientID приложения.",
+      "Откройте https://oauth.yandex.ru/authorize?response_type=token&client_id=ВАШ_CLIENTID и подтвердите доступ.",
+      "Вас перебросит на страницу, где будет сам токен — он же виден в адресной строке после access_token=. Именно его сюда, не ClientID.",
+    ],
     labels: { token: "OAuth-токен", path: "Папка" },
-    placeholders: { path: "/Документы" },
+    placeholders: { token: "y0_...", path: "/Документы" },
   },
   dropbox: {
     label: "Dropbox",
     icon: Package,
-    help: () =>
-      "dropbox.com/developers/apps → приложение с правом files.content.read и files.metadata.read → App key и App secret оттуда же, refresh token выдаётся один раз при первой авторизации с параметром token_access_type=offline.",
+    steps: () => [
+      "dropbox.com/developers/apps → Create app → Scoped access → выберите доступ к папке или ко всему Dropbox.",
+      "Вкладка Permissions → отметьте files.metadata.read и files.content.read → Submit.",
+      "Вкладка Settings → скопируйте App key и App secret.",
+      "Откройте https://www.dropbox.com/oauth2/authorize?client_id=APP_KEY&response_type=code&token_access_type=offline и скопируйте выданный код.",
+      "Обменяйте код на постоянный refresh token: curl -u APP_KEY:APP_SECRET -d grant_type=authorization_code -d code=КОД https://api.dropbox.com/oauth2/token",
+    ],
     labels: {
       app_key: "App key",
       app_secret: "App secret",
@@ -86,8 +109,13 @@ const CATALOGUE: Record<ConnectorKind, Presentation> = {
   onedrive: {
     label: "OneDrive",
     icon: CloudUpload,
-    help: () =>
-      "portal.azure.com → App registrations → приложение с правами Files.Read.All и offline_access → Client ID и Client secret оттуда же, refresh token выдаётся при первой авторизации.",
+    steps: () => [
+      "portal.azure.com → App registrations → New registration → разрешите личные аккаунты Microsoft, Redirect URI типа Web: http://localhost",
+      "API permissions → Microsoft Graph → Delegated → Files.Read.All и offline_access.",
+      "Certificates & secrets → New client secret → скопируйте значение (Value, не Secret ID).",
+      "Откройте https://login.microsoftonline.com/common/oauth2/v2.0/authorize?client_id=CLIENT_ID&response_type=code&redirect_uri=http://localhost&scope=Files.Read.All%20offline_access и скопируйте code из адресной строки.",
+      "Обменяйте код на refresh token: curl -d client_id=... -d client_secret=... -d grant_type=authorization_code -d redirect_uri=http://localhost -d code=КОД https://login.microsoftonline.com/common/oauth2/v2.0/token",
+    ],
     labels: {
       client_id: "Client ID",
       client_secret: "Client secret",
@@ -294,9 +322,16 @@ function AddForm({
             <presentation.icon className="size-5 text-muted-foreground" />
             <span className="text-sm font-medium">{presentation.label}</span>
           </div>
-          <p className="text-xs leading-relaxed text-muted-foreground">
-            {presentation.help(serviceAccount)}
-          </p>
+          <ol className="list-decimal space-y-1 pl-4 text-xs leading-relaxed text-muted-foreground">
+            {presentation.steps(serviceAccount).map((step) => (
+              // The step text is the key: these lists are static and never
+              // reordered, and an index would be a worse identity than the
+              // sentence itself.
+              <li key={step} className="break-words">
+                {step}
+              </li>
+            ))}
+          </ol>
 
           <label className="block space-y-1">
             <span className="text-xs text-muted-foreground">Название</span>

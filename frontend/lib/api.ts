@@ -154,18 +154,24 @@ export async function ask(
   const reader = response.body.pipeThrough(new TextDecoderStream()).getReader();
   let buffer = "";
 
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buffer += value;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += value;
 
-    // A record ends at a blank line; anything after it is an incomplete record.
-    let separator = buffer.indexOf("\n\n");
-    while (separator !== -1) {
-      dispatch(buffer.slice(0, separator), handlers);
-      buffer = buffer.slice(separator + 2);
-      separator = buffer.indexOf("\n\n");
+      // A record ends at a blank line; anything after it is an incomplete record.
+      let separator = buffer.indexOf("\n\n");
+      while (separator !== -1) {
+        dispatch(buffer.slice(0, separator), handlers);
+        buffer = buffer.slice(separator + 2);
+        separator = buffer.indexOf("\n\n");
+      }
     }
+  } finally {
+    // A handler that throws would otherwise leave the body locked and the
+    // connection open for as long as the tab lives.
+    await reader.cancel().catch(() => undefined);
   }
 }
 

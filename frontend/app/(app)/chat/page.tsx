@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Loader2, Plus, SendHorizontal, Trash2 } from "lucide-react";
+import { Loader2, Plus, SendHorizontal, Square, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -114,15 +114,25 @@ export default function ChatPage() {
         controller.signal,
       );
     } catch (cause) {
-      // An abort is a chat switch or an unmount, not a failure to report.
-      if (controller.signal.aborted) return;
-      failed = true;
-      toast.error(describe(cause));
+      // An abort is a stop, a chat switch or an unmount — not a failure.
+      if (!controller.signal.aborted) {
+        failed = true;
+        toast.error(describe(cause));
+      }
     } finally {
       if (inFlight.current === controller) inFlight.current = null;
     }
 
-    if (controller.signal.aborted) return;
+    if (controller.signal.aborted) {
+      // Leaving the half-finished stream in state would strand this chat: on
+      // returning to it the phantom answer reappears and, because `active` is
+      // what disables the composer, the send button never comes back.
+      setStreaming((current) => (current?.chatId === activeId ? null : current));
+      if (text) {
+        setMessages((current) => [...current, localMessage("assistant", text, citations)]);
+      }
+      return;
+    }
 
     setStreaming(null);
     if (text) {
@@ -135,6 +145,10 @@ export default function ChatPage() {
     // The first question becomes the chat title on the server.
     api.chats().then(setChats).catch(() => undefined);
   }, [activeId, draft, active]);
+
+  // The answer keeps streaming on the server; this stops waiting for it and
+  // keeps what has already arrived.
+  const stop = useCallback(() => inFlight.current?.abort(), []);
 
   async function newChat() {
     try {
@@ -247,19 +261,27 @@ export default function ChatPage() {
               aria-label="Вопрос"
               disabled={!activeId}
             />
-            <Button
-              onClick={() => void send()}
-              disabled={!draft.trim() || !activeId || active !== null}
-              size="icon"
-              className="size-11 shrink-0"
-              aria-label="Отправить"
-            >
-              {active ? (
-                <Loader2 className="size-4 animate-spin" />
-              ) : (
+            {active ? (
+              <Button
+                onClick={stop}
+                size="icon"
+                variant="secondary"
+                className="size-11 shrink-0"
+                aria-label="Остановить"
+              >
+                <Square className="size-3.5 fill-current" />
+              </Button>
+            ) : (
+              <Button
+                onClick={() => void send()}
+                disabled={!draft.trim() || !activeId}
+                size="icon"
+                className="size-11 shrink-0"
+                aria-label="Отправить"
+              >
                 <SendHorizontal className="size-4" />
-              )}
-            </Button>
+              </Button>
+            )}
           </div>
         </div>
       </section>

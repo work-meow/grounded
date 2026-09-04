@@ -14,6 +14,12 @@ allowed to be down, slow, or lying. Nothing it does may raise out of
 :meth:`_PollingSubject.run`, because that thread failing takes the process with
 it — and with it the *other* users' sources and their uploads. A failed listing
 keeps the previous snapshot; a failed download retries on the next pass.
+
+"The previous snapshot" is empty on a fresh start, though, and this process
+restarts whenever anybody adds a source. A listing that fails right after one
+therefore contributes nothing at all — so a failed pass is retried in half a
+minute rather than at the next refresh, which would leave the source dark for
+ten.
 """
 
 import json
@@ -32,6 +38,11 @@ from rag_shared.formats import is_supported
 from rag_indexer.connectors.contract import COMMIT_INTERVAL_MS, clean_name, describe
 
 logger = logging.getLogger(__name__)
+
+#: How soon to try again after a listing failed, doubling up to the refresh
+#: interval. Half a minute is short enough that a restart landing on a blip does
+#: not cost a whole cycle, and long enough not to hammer a service that is down.
+_RETRY_AFTER_FAILURE_S = 30.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -139,18 +150,35 @@ class _PollingSubject(ConnectorSubject):
         # on restart the whole source is listed again, which costs one pass and
         # no embeddings (those are cached on disk by document content).
         indexed: dict[str, int] = {}
+        failures = 0
         while True:
             started = time.monotonic()
-            self._poll(indexed)
+            if self._poll(indexed):
+                failures = 0
+            else:
+                failures += 1
             self.commit()
             # Static mode reads the source once and ends the stream, matching
             # what Pathway's own connectors do with it. It is what lets a test
             # run a connector through a real graph rather than around it.
             if self._mode == "static":
                 return
-            time.sleep(max(0.0, self._refresh_interval - (time.monotonic() - started)))
+            time.sleep(max(0.0, self._delay(failures) - (time.monotonic() - started)))
 
-    def _poll(self, indexed: dict[str, int]) -> None:
+    def _delay(self, failures: int) -> float:
+        """How long to wait before the next pass.
+
+        The refresh interval when the last pass worked. After a failure, sooner
+        — backing off from half a minute — because until a listing succeeds this
+        source has no documents in the index at all, and ten minutes of that is
+        a long time to be dark over one bad response.
+        """
+        if not failures:
+            return self._refresh_interval
+        return min(_RETRY_AFTER_FAILURE_S * 2 ** (failures - 1), self._refresh_interval)
+
+    def _poll(self, indexed: dict[str, int]) -> bool:
+        """One pass. Returns whether the source could be listed at all."""
         try:
             listing = self._source.contents()
         except Exception:
@@ -161,7 +189,7 @@ class _PollingSubject(ConnectorSubject):
             # indexer would have to report back to the API — a channel that does
             # not exist yet and is the whole cost of fixing this.
             logger.exception("%s: could not be listed; keeping the last snapshot", self._label)
-            return
+            return False
 
         found = {file.external_id: file for file in listing.files}
         if listing.complete:
@@ -183,6 +211,7 @@ class _PollingSubject(ConnectorSubject):
                 continue
             if self._store(file):
                 indexed[file.external_id] = file.modified_at
+        return True
 
     def _store(self, file: RemoteFile) -> bool:
         """Index one new or changed document.

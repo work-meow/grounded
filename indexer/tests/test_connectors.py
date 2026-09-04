@@ -429,3 +429,31 @@ def test_a_typed_folder_reaches_each_service_the_way_it_spells_it(typed, yandex,
         )
         == onedrive
     )
+
+
+# --- pacing ------------------------------------------------------------------
+
+
+def test_a_failed_pass_is_retried_sooner_than_the_refresh_interval():
+    """Until a listing succeeds this source has no documents in the index.
+
+    "Keep the last snapshot" is the right answer to a blip, but on a fresh start
+    the last snapshot is empty — and this process restarts whenever anybody adds
+    a source. Waiting a full interval after one bad response would leave the
+    source dark for that whole interval.
+    """
+    subject = _Subject(_Service([]))
+    subject._refresh_interval = 600
+
+    assert subject._delay(0) == 600, "a pass that worked waits the full interval"
+    assert [subject._delay(n) for n in (1, 2, 3)] == [30, 60, 120]
+    assert subject._delay(10) == 600, "and backs off no further than the interval"
+
+
+def test_a_poll_reports_whether_it_worked():
+    subject = _Subject(_Service([_file()]))
+
+    assert subject._poll({}) is True
+
+    subject._source.listing_fails = True
+    assert subject._poll({}) is False

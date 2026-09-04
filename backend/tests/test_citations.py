@@ -66,3 +66,28 @@ def test_snippet_is_bounded():
     _render([chunk("a", 1, "щ" * 5000)], citations)
 
     assert len(citations.items[0]["snippet"]) == 300
+
+
+def test_only_the_sources_the_answer_cites_are_returned():
+    """Eight chunks go to the model; the two it leans on go to the UI."""
+    citations = _Citations()
+    _render([chunk("a", 1), chunk("b", 2), chunk("c", 3)], citations)
+
+    kept = citations.referenced_in("По договору [1], и отдельно в приложении [3].")
+
+    assert [item["n"] for item in kept] == [1, 3]
+
+
+def test_an_answer_without_markers_claims_no_sources():
+    citations = _Citations()
+    _render([chunk("a", 1)], citations)
+
+    assert citations.referenced_in("В базе ничего не нашлось.") == []
+
+
+def test_a_marker_the_tools_never_issued_is_ignored():
+    """The model can write [9] out of nowhere; there is nothing to link it to."""
+    citations = _Citations()
+    _render([chunk("a", 1)], citations)
+
+    assert [item["n"] for item in citations.referenced_in("Точно так [9] и [1].")] == [1]

@@ -5,6 +5,7 @@ gives us the call ceilings. What lives here is the tool surface and the
 citation bookkeeping that turns retrieved chunks into clickable sources.
 """
 
+import re
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from functools import lru_cache
@@ -14,7 +15,7 @@ from uuid import UUID
 from langchain.agents import create_agent
 from langchain.agents.middleware import ModelCallLimitMiddleware, ToolCallLimitMiddleware
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
-from langchain_core.tools import tool
+from langchain_core.tools import BaseTool, tool
 from langchain_openrouter import ChatOpenRouter
 
 from app import retriever
@@ -34,9 +35,13 @@ SYSTEM_PROMPT = """\
 """
 
 
+# The [1] / [12] markers the model is told to write, as they appear in the answer.
+_MARKER_RE = re.compile(r"\[(\d{1,3})\]")
+
+
 @dataclass
 class _Citations:
-    """Chunks the agent actually looked at, in first-seen order."""
+    """Chunks shown to the agent, numbered in first-seen order."""
 
     items: list[dict[str, Any]] = field(default_factory=list)
     _numbers: dict[tuple[str | None, int | None], int] = field(default_factory=dict)
@@ -57,6 +62,18 @@ class _Citations:
             )
         return self._numbers[key]
 
+    def referenced_in(self, answer: str) -> list[dict[str, Any]]:
+        """The sources the answer actually points at, in citation order.
+
+        A search hands the model every chunk it found — eight of them by
+        default — and a good answer leans on two. Returning all eight would put
+        [2]..[8] under an answer whose text mentions none of them: chips that
+        look like references to something the reader never sees. So the answer
+        itself decides, and an answer that cites nothing gets no sources.
+        """
+        cited = {int(marker) for marker in _MARKER_RE.findall(answer)}
+        return [item for item in self.items if item["n"] in cited]
+
 
 def _render(chunks: list[retriever.Chunk], citations: _Citations) -> str:
     if not chunks:
@@ -65,7 +82,7 @@ def _render(chunks: list[retriever.Chunk], citations: _Citations) -> str:
     for chunk in chunks:
         number = citations.add(chunk)
         where = chunk.filename or "документ"
-        if chunk.page:
+        if chunk.page is not None:
             where += f", стр. {chunk.page}"
         lines.append(f"[{number}] ({where})\n{chunk.text}")
     return "\n\n".join(lines)
@@ -76,7 +93,7 @@ def _build_tools(
     user_id: UUID,
     documents: list[tuple[UUID, str]],
     citations: _Citations,
-) -> list:
+) -> list[BaseTool]:
     """Tools bound to one user by closure.
 
     Binding at construction time (rather than passing the user through agent
@@ -180,10 +197,13 @@ async def answer(
     )
 
     inputs = {"messages": [*_history(history), HumanMessage(question)]}
+    # Kept so the citation markers can be read back out of the finished answer.
+    parts: list[str] = []
     async for chunk, meta in agent.astream(inputs, stream_mode="messages"):
         if meta.get("langgraph_node") != "model":
             continue
         if text := _text_of(chunk):
+            parts.append(text)
             yield "token", text
 
-    yield "citations", citations.items
+    yield "citations", citations.referenced_in("".join(parts))

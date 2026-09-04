@@ -1,6 +1,6 @@
 import uuid
 from datetime import datetime
-from typing import Any, Literal
+from typing import Any
 
 from sqlalchemy import (
     BigInteger,
@@ -13,8 +13,6 @@ from sqlalchemy import (
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
-
-MessageRole = Literal["user", "assistant"]
 
 
 class Base(DeclarativeBase):
@@ -112,6 +110,7 @@ class Message(Base):
     chat_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("chats.id", ondelete="CASCADE"), nullable=False
     )
+    # "user" | "assistant" — the only two the API ever writes.
     role: Mapped[str] = mapped_column(String(16), nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
     # [{document_id, filename, page, snippet}, ...] rendered as clickable sources.

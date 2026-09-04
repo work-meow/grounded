@@ -13,7 +13,6 @@ token must not cost another user their uploads.
 import json
 import logging
 import os
-import tempfile
 
 import pathway as pw
 from rag_shared.connectors import ConnectorSpec, Kind
@@ -72,13 +71,20 @@ def build_tables(settings: IndexerSettings, specs: list[ConnectorSpec]) -> list[
     return tables
 
 
+#: Google's client takes a path, not a blob, so the key from the environment
+#: has to land somewhere. A fixed name rather than a temporary one: the process
+#: restarts whenever the source list changes, and a fresh file per restart would
+#: accumulate for as long as the container lives.
+_GDRIVE_KEY_PATH = "/tmp/rag-gdrive-credentials.json"
+
+
 def _gdrive_credentials(settings: IndexerSettings) -> str:
     """The service account key on disk, because Google's client wants a path.
 
-    Written from an environment variable rather than mounted so that the same
-    compose file works with the key held in ``.env`` next to every other secret.
-    Created with 0600 by ``mkstemp`` and left in place: Pathway opens it when the
-    connector's thread starts, not when the graph is built.
+    Written from an environment variable rather than mounted, so the same
+    compose file works with the key held in ``.env`` alongside every other
+    secret. Left in place afterwards: Pathway opens it when the connector's
+    thread starts, not when the graph is built.
     """
     raw = settings.gdrive_credentials_json.strip()
     if not raw:
@@ -88,7 +94,9 @@ def _gdrive_credentials(settings: IndexerSettings) -> str:
     except ValueError as exc:
         raise RuntimeError("GDRIVE_CREDENTIALS_JSON is not valid JSON") from exc
 
-    handle, path = tempfile.mkstemp(prefix="gdrive-", suffix=".json")
+    # O_NOFOLLOW and an explicit 0600: a predictable name under /tmp is exactly
+    # what a symlink would be planted for, and this file is a private key.
+    handle = os.open(_GDRIVE_KEY_PATH, os.O_CREAT | os.O_WRONLY | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
     with os.fdopen(handle, "w") as file:
         file.write(raw)
-    return path
+    return _GDRIVE_KEY_PATH

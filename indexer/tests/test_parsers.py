@@ -44,7 +44,7 @@ def test_docx_reads_paragraphs_and_tables():
     buffer = io.BytesIO()
     document.save(buffer)
 
-    (text, meta), = parse_document(buffer.getvalue())
+    ((text, meta),) = parse_document(buffer.getvalue())
 
     assert "Договор аренды" in text
     # Contracts keep their terms in tables at least as often as in prose.
@@ -76,7 +76,7 @@ def test_xlsx_flattens_rows_per_sheet():
     buffer = io.BytesIO()
     workbook.save(buffer)
 
-    (text, meta), = parse_document(buffer.getvalue())
+    ((text, meta),) = parse_document(buffer.getvalue())
 
     assert "Уведомление | 30" in text
     assert meta["sheet"] == "Условия"
@@ -91,7 +91,7 @@ def test_xlsx_flattens_rows_per_sheet():
     ],
 )
 def test_plain_text_survives_several_encodings(raw):
-    (text, _), = parse_document(raw)
+    ((text, _),) = parse_document(raw)
     assert text.strip()
 
 

@@ -9,6 +9,8 @@ class Settings(BaseSettings):
 
     # --- application database -------------------------------------------------
     database_url: str = "postgresql+asyncpg://rag:rag@localhost:5432/rag"
+    db_pool_size: int = 5
+    db_max_overflow: int = 5
 
     # --- auth -----------------------------------------------------------------
     # Tokens are minted out of band with `uv run rag-token <user-id>` and pasted

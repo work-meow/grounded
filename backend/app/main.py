@@ -13,11 +13,15 @@ from app.routers import auth, chats, sources
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    # try/finally, not a plain sequence: a failure during shutdown would
+    # otherwise skip the teardown and leak the connection pool.
     async with httpx.AsyncClient() as client:
         retriever.set_client(client)
-        yield
-        retriever.set_client(None)
-    await engine.dispose()
+        try:
+            yield
+        finally:
+            retriever.set_client(None)
+            await engine.dispose()
 
 
 settings = get_settings()

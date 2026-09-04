@@ -163,14 +163,17 @@ def _build_tools(settings: Settings, user_id: UUID, citations: _Citations) -> li
 
 
 @lru_cache(maxsize=1)
-def _model(model: str, api_key: str, temperature: float) -> ChatOpenRouter:
+def _model(model: str, api_key: str, temperature: float, effort: str = "") -> ChatOpenRouter:
     """One chat client for the whole process.
 
     Built per request, this would open a fresh HTTP connection pool on every
     question and never close it. The client carries no per-user state — only
     the tools do — so a single instance is safe to share.
     """
-    return ChatOpenRouter(model=model, api_key=api_key, temperature=temperature)
+    reasoning = {"effort": effort} if effort else None
+    return ChatOpenRouter(
+        model=model, api_key=api_key, temperature=temperature, reasoning=reasoning
+    )
 
 
 def _history(messages: list[Message]) -> list[BaseMessage]:
@@ -202,7 +205,12 @@ async def answer(
     """
     citations = _Citations()
     agent = create_agent(
-        model=_model(settings.agent_model, settings.openrouter_api_key, settings.agent_temperature),
+        model=_model(
+            settings.agent_model,
+            settings.openrouter_api_key,
+            settings.agent_temperature,
+            settings.agent_reasoning_effort,
+        ),
         tools=_build_tools(settings, user_id, citations),
         system_prompt=SYSTEM_PROMPT,
         middleware=[

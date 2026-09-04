@@ -57,6 +57,13 @@ class Settings(BaseSettings):
     # this replaced, and it follows the citation instructions more reliably.
     agent_model: str = "openai/gpt-5-mini"
     agent_temperature: float = 0.0
+    # How much the model is allowed to think before answering, for the models
+    # that think. Measured on the deployment against nine questions whose
+    # answers were sitting in the retrieved fragments: gpt-5-mini answered 7 of
+    # 9 in 9.3 s on its own, and 9 of 9 in 4.7 s at "minimal". More reasoning
+    # made it *less* accurate — it talked itself out of evidence it had been
+    # handed. Set to "" for a model that does not take the parameter.
+    agent_reasoning_effort: str = "minimal"
     # Hard ceiling so a confused agent cannot run away with the bill.
     max_tool_calls_per_run: int = 5
     max_model_calls_per_run: int = 8

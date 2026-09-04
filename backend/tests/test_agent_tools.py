@@ -105,3 +105,25 @@ async def test_read_document_narrows_to_the_owner_and_the_document(monkeypatch):
     # Both, and both as UUID rather than str — the typing is the injection guard.
     assert seen["user_id"] == USER
     assert seen["document_id"] == FROM_NOTION
+
+
+def test_one_model_client_for_the_process():
+    """Built per request it would open a connection pool per question and never
+    close one. The cache is what keeps that from happening."""
+    first = agent._model("m", "k", 0.0, "minimal", 120.0)
+    second = agent._model("m", "k", 0.0, "minimal", 120.0)
+
+    assert first is second
+    assert agent._model("other", "k", 0.0, "minimal", 120.0) is not first
+
+
+def test_the_model_client_will_not_wait_forever():
+    """A hung provider holds the SSE stream open with it."""
+    client = agent._model("m", "k", 0.0, "", 45.0)
+
+    assert client.request_timeout == 45.0
+
+
+def test_the_reasoning_effort_reaches_the_client():
+    assert agent._model("m", "k", 0.0, "minimal", 120.0).reasoning == {"effort": "minimal"}
+    assert agent._model("m", "k", 0.0, "", 120.0).reasoning is None

@@ -165,7 +165,9 @@ def _build_tools(settings: Settings, user_id: UUID, citations: _Citations) -> li
 
 
 @lru_cache(maxsize=1)
-def _model(model: str, api_key: str, temperature: float, effort: str = "") -> ChatOpenRouter:
+def _model(
+    model: str, api_key: str, temperature: float, effort: str = "", timeout: float = 120.0
+) -> ChatOpenRouter:
     """One chat client for the whole process.
 
     Built per request, this would open a fresh HTTP connection pool on every
@@ -174,7 +176,13 @@ def _model(model: str, api_key: str, temperature: float, effort: str = "") -> Ch
     """
     reasoning = {"effort": effort} if effort else None
     return ChatOpenRouter(
-        model=model, api_key=api_key, temperature=temperature, reasoning=reasoning
+        model=model,
+        api_key=api_key,
+        temperature=temperature,
+        reasoning=reasoning,
+        # Without it the client waits on the provider for as long as the
+        # provider likes, and the SSE stream on the other side waits with it.
+        timeout=timeout,
     )
 
 
@@ -212,6 +220,7 @@ async def answer(
             settings.openrouter_api_key,
             settings.agent_temperature,
             settings.agent_reasoning_effort,
+            settings.agent_timeout_s,
         ),
         tools=_build_tools(settings, user_id, citations),
         system_prompt=SYSTEM_PROMPT,

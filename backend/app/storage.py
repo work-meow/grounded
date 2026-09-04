@@ -19,7 +19,18 @@ def _config(settings: Settings) -> Config:
     # self-hosted gateway routes. Path style is only forced when asked for, so
     # AWS keeps its own default.
     style = "path" if settings.s3_path_style else "auto"
-    return Config(s3={"addressing_style": style}, signature_version="s3v4")
+    return Config(
+        s3={"addressing_style": style},
+        signature_version="s3v4",
+        # Explicit, because botocore's defaults are made for a batch job: five
+        # attempts against sixty-second timeouts is four minutes of a user
+        # waiting on an upload while the object store is wedged. Three attempts
+        # in standard mode, and a connect that fails fast — the store is one hop
+        # away on the same docker network, so a slow connect is a dead store.
+        connect_timeout=5,
+        read_timeout=settings.s3_timeout_s,
+        retries={"max_attempts": 3, "mode": "standard"},
+    )
 
 
 @asynccontextmanager

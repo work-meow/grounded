@@ -34,6 +34,10 @@ class Settings(BaseSettings):
     # MinIO and most self-hosted gateways need bucket-in-path addressing.
     s3_path_style: bool = False
     max_upload_bytes: int = 64 * 1024 * 1024
+    # Per attempt, and it has to clear the largest upload: 64 MB over the
+    # internal network is a second or two, so this is a ceiling on a wedged
+    # store rather than a budget for a slow one.
+    s3_timeout_s: int = 60
 
     # --- connected sources ----------------------------------------------------
     # Seals a connector's credentials before they reach the database or the
@@ -64,6 +68,10 @@ class Settings(BaseSettings):
     # made it *less* accurate — it talked itself out of evidence it had been
     # handed. Set to "" for a model that does not take the parameter.
     agent_reasoning_effort: str = "minimal"
+    # A hung provider must not hold an SSE stream open indefinitely. Long
+    # enough for a reasoning model on a long question; short enough that a
+    # dead upstream surfaces as an error rather than a page that never ends.
+    agent_timeout_s: float = 120.0
     # Hard ceiling so a confused agent cannot run away with the bill.
     max_tool_calls_per_run: int = 5
     max_model_calls_per_run: int = 8

@@ -15,8 +15,18 @@
 # The bucket gets its own hostname because presigned links are opened by the
 # browser, not by us.
 
+# Pathway logs its S3 poll roughly twice a second, so an unbounded json-file
+# driver would quietly eat the disk. Capped for every service, not just that one.
+x-logging: &logging
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "3"
+
 services:
   minio:
+    <<: *logging
     image: minio/minio:RELEASE.2025-04-22T22-12-26Z
     restart: unless-stopped
     command: server /data --console-address ":9001"
@@ -50,6 +60,7 @@ services:
 
   # One-shot: make the bucket, then exit.
   minio-init:
+    <<: *logging
     image: minio/mc:RELEASE.2025-04-16T18-13-26Z
     depends_on:
       minio: {condition: service_healthy}
@@ -61,6 +72,7 @@ services:
     restart: "no"
 
   indexer:
+    <<: *logging
     image: ${IMAGE_PREFIX:-ghcr.io/monitizationrsya/rag}-indexer:${IMAGE_TAG:-latest}
     pull_policy: always
     restart: unless-stopped
@@ -85,6 +97,7 @@ services:
     mem_limit: 1300m
 
   backend:
+    <<: *logging
     image: ${IMAGE_PREFIX:-ghcr.io/monitizationrsya/rag}-backend:${IMAGE_TAG:-latest}
     pull_policy: always
     restart: unless-stopped
@@ -124,6 +137,7 @@ services:
       - traefik.http.services.rag-api.loadbalancer.server.port=8000
 
   frontend:
+    <<: *logging
     # NEXT_PUBLIC_API_URL is baked in at build time as "" — the UI calls /api on
     # its own origin. See .github/workflows/build.yml.
     image: ${IMAGE_PREFIX:-ghcr.io/monitizationrsya/rag}-frontend:${IMAGE_TAG:-latest}

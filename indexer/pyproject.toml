@@ -7,10 +7,16 @@ requires-python = ">=3.13,<3.14"
 dependencies = [
     # the S3 key layout, shared with the API (../shared)
     "rag-shared",
-    # xpack-llm brings the embedders, parsers, splitters, indexes and REST server.
-    # It pins langchain<0.4 for adapters we do not use, which is exactly why this
-    # lives in its own virtualenv, separate from the API's langchain>=1.0.
-    "pathway[xpack-llm]>=0.32",
+    # Plain `pathway`, not pathway[xpack-llm]. The extra exists to satisfy the
+    # optional_imports guards in pw.xpacks.llm, but the only ones we hit are
+    # OpenAIEmbedder, UnstructuredParser, TokenCountSplitter, DocumentStore and
+    # DocumentStoreServer — openai, tiktoken and unstructured cover all of them.
+    # The extra would additionally pull litellm, cohere, llama-index,
+    # google-generativeai, instructor, fastmcp and langchain<0.4: ~300 MB of
+    # surface area this process never imports.
+    "pathway>=0.32",
+    "openai~=1.60",
+    "tiktoken>=0.5",
     # UnstructuredParser handles PDF/DOCX/PPTX/XLSX/TXT/MD from one code path.
     # Installed directly rather than via pathway[xpack-llm-docs], which drags in
     # docling + paddleocr + torch.
@@ -31,8 +37,8 @@ dependencies = [
 dev = ["pytest>=8.4", "ruff>=0.14"]
 
 # A path dependency rather than a uv workspace: a workspace resolves to one
-# lockfile and one virtualenv, which is exactly what this project and the API
-# cannot share.
+# lockfile and one virtualenv, and Pathway's ~1.5 GB dependency tree has no
+# business inside the API image.
 [tool.uv.sources]
 rag-shared = { path = "../shared", editable = true }
 

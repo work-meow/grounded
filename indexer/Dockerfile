@@ -1,12 +1,33 @@
 # Build context is the repository root: the indexer depends on ../shared.
-FROM python:3.13-slim-bookworm
+#
+# Two stages on purpose. A single-stage build left uv's download cache and a
+# second copy of the virtualenv in the layers — 8.19 GB for an image whose
+# virtualenv is 1.8 GB. The cache mount keeps downloads out of the layers, and
+# only the finished /app and /shared cross into the final image.
+
+FROM python:3.13-slim-bookworm AS builder
 
 COPY --from=ghcr.io/astral-sh/uv:0.9.7 /uv /bin/uv
 
 ENV UV_COMPILE_BYTECODE=1 \
     UV_LINK_MODE=copy \
-    UV_PYTHON_DOWNLOADS=never \
-    PYTHONUNBUFFERED=1 \
+    UV_PYTHON_DOWNLOADS=never
+
+COPY shared/ /shared/
+
+WORKDIR /app
+COPY indexer/pyproject.toml indexer/uv.lock ./
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-install-project --no-dev
+
+COPY indexer/ ./
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-dev
+
+
+FROM python:3.13-slim-bookworm
+
+ENV PYTHONUNBUFFERED=1 \
     NLTK_DATA=/opt/nltk_data \
     PATH="/app/.venv/bin:$PATH"
 
@@ -15,14 +36,8 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends libmagic1 \
     && rm -rf /var/lib/apt/lists/*
 
-COPY shared/ /shared/
-
-WORKDIR /app
-COPY indexer/pyproject.toml indexer/uv.lock ./
-RUN uv sync --frozen --no-install-project --no-dev
-
-COPY indexer/ ./
-RUN uv sync --frozen --no-dev
+COPY --from=builder /shared /shared
+COPY --from=builder /app /app
 
 # unstructured fetches these on first use. Baking them in keeps the first
 # upload from depending on nltk's servers being up.

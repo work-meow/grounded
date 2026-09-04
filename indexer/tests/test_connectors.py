@@ -472,6 +472,9 @@ def test_a_failed_pass_is_retried_sooner_than_the_refresh_interval():
     assert subject._delay(0) == 600, "a pass that worked waits the full interval"
     assert [subject._delay(n) for n in (1, 2, 3)] == [30, 60, 120]
     assert subject._delay(10) == 600, "and backs off no further than the interval"
+    # Bounded in the exponent too: a source left connected with a dead token
+    # fails every half minute for as long as it stays connected.
+    assert subject._delay(1_000_000) == 600
 
 
 def test_a_poll_reports_whether_it_worked():

@@ -44,6 +44,10 @@ logger = logging.getLogger(__name__)
 #: not cost a whole cycle, and long enough not to hammer a service that is down.
 _RETRY_AFTER_FAILURE_S = 30.0
 
+#: Enough doublings to reach any sane refresh interval — 30 s times 2^20 is
+#: about a year — after which the delay is the interval anyway.
+_MAX_DOUBLINGS = 20
+
 
 @dataclass(frozen=True, slots=True)
 class RemoteFile:
@@ -179,7 +183,12 @@ class _PollingSubject(ConnectorSubject):
         """
         if not failures:
             return self._refresh_interval
-        return min(_RETRY_AFTER_FAILURE_S * 2 ** (failures - 1), self._refresh_interval)
+        # The exponent is bounded, not just the result. A source whose token was
+        # revoked and left connected keeps failing every half minute for as long
+        # as it stays connected, and 2 ** (a year of those) is an integer with
+        # hundreds of thousands of digits — built and thrown away on every poll.
+        doublings = min(failures - 1, _MAX_DOUBLINGS)
+        return min(_RETRY_AFTER_FAILURE_S * 2**doublings, self._refresh_interval)
 
     def _poll(self, indexed: dict[str, int]) -> bool:
         """One pass. Returns whether the source could be listed at all."""

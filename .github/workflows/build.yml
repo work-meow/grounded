@@ -115,8 +115,6 @@ jobs:
       packages: read
     env:
       TAG: sha-${{ github.sha }}
-      # Spelled out: a job-level env entry cannot reference another env entry.
-      IMAGE: ghcr.io/${{ github.repository }}
     services:
       postgres:
         image: postgres:16
@@ -132,6 +130,11 @@ jobs:
           --health-retries 10
 
     steps:
+      # The owner is mixed case and a Docker reference must be lowercase.
+      # metadata-action does this for the build job; here it is manual.
+      - name: resolve image name
+        run: echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_ENV"
+
       - uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}

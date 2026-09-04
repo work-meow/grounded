@@ -61,36 +61,56 @@ REQUIRED_FIELDS: dict[Kind, tuple[str, ...]] = {
 
 
 @dataclass(frozen=True, slots=True)
-class ConnectorSpec:
-    """One connected source, with its credential already in the clear."""
-
+class _Source:
     source_id: UUID
     user_id: UUID
     kind: Kind
     name: str
+
+
+@dataclass(frozen=True, slots=True)
+class SealedSource(_Source):
+    """A source as it travels: the credential still sealed.
+
+    What the API holds. It seals a config once, when the user submits it, and
+    from then on only ever moves the blob around — so the process that writes
+    the manifest never needs the plaintext, and the manifest for an unchanged
+    list is byte-identical every time it is written.
+    """
+
+    sealed_config: str
+
+
+@dataclass(frozen=True, slots=True)
+class ConnectorSpec(_Source):
+    """A source as it is used: the credential in the clear.
+
+    What the indexer holds, and only after opening the seal.
+    """
+
     config: dict[str, Any]
 
     def missing_fields(self) -> tuple[str, ...]:
         return tuple(f for f in REQUIRED_FIELDS[self.kind] if not self.config.get(f))
 
 
-def dump_manifest(specs: list[ConnectorSpec], sealer: Sealer) -> bytes:
+def dump_manifest(sources: list[SealedSource]) -> bytes:
     """Serialise the source list for the bucket.
 
-    Sorted by source id so that an unchanged list serialises to identical bytes
-    apart from the seal, which the indexer's watcher compares.
+    Sorted by source id, because the indexer restarts on a changed ETag and a
+    list that serialises differently on each write would restart it each time.
     """
     payload = {
         "version": _VERSION,
         "sources": [
             {
-                "source_id": str(spec.source_id),
-                "user_id": str(spec.user_id),
-                "kind": spec.kind.value,
-                "name": spec.name,
-                "sealed_config": sealer.seal(spec.config),
+                "source_id": str(source.source_id),
+                "user_id": str(source.user_id),
+                "kind": source.kind.value,
+                "name": source.name,
+                "sealed_config": source.sealed_config,
             }
-            for spec in sorted(specs, key=lambda s: s.source_id)
+            for source in sorted(sources, key=lambda s: s.source_id)
         ],
     }
     return json.dumps(payload, ensure_ascii=False, indent=2).encode()

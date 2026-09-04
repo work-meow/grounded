@@ -80,12 +80,34 @@ def _tenant_filter(user_id: UUID, document_id: UUID | None = None) -> str:
     return clause
 
 
-def _as_page(value: Any) -> int | None:
-    """Metadata crosses JSON, so a page number can arrive as 14, "14" or 14.0."""
+def _as_int(value: Any) -> int | None:
+    """Metadata crosses JSON, so a number can arrive as 14, "14" or 14.0."""
     try:
         return int(value) if value is not None else None
     except (TypeError, ValueError):
         return None
+
+
+@dataclass(frozen=True, slots=True)
+class IndexedDocument:
+    """One document as the index knows it.
+
+    Deliberately not the same thing as a :class:`app.models.Document` row: that
+    table records files this API wrote to the bucket, and a connected source
+    produces documents it never touched.
+    """
+
+    document_id: str
+    source_id: str
+    filename: str
+    #: Where a person opens the original. None for uploads, which get a
+    #: presigned link to the bucket instead.
+    web_url: str | None
+    size_bytes: int | None
+    #: When the far end last changed it. Stands in for "created" in the file
+    #: list, which is the only date that means anything for a file we mirror.
+    modified_at: int
+    ready: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -105,7 +127,7 @@ class Chunk:
             score=-float(hit.get("dist", 0.0)),
             document_id=meta.get("document_id"),
             filename=meta.get("filename"),
-            page=_as_page(meta.get("page_number")),
+            page=_as_int(meta.get("page_number")),
         )
 
 
@@ -124,32 +146,45 @@ async def retrieve(
     return [Chunk.from_hit(hit) for hit in hits]
 
 
-async def ready_document_ids(settings: Settings, user_id: UUID) -> set[str]:
-    """The user's documents that Pathway has finished indexing.
+async def indexed_documents(settings: Settings, user_id: UUID) -> list[IndexedDocument]:
+    """Every document of this user's that Pathway holds, uploaded or connected.
 
-    This is the source of truth for "is it ready yet?". Nothing about indexing
-    state is mirrored into Postgres, so the two can never disagree.
+    This is the source of truth for what is searchable. Nothing about indexing
+    state is mirrored into Postgres, so the two can never disagree — and for a
+    connected source there is no Postgres row at all: nothing here ever fetched
+    those files, so the index is the only place that has seen them.
 
-    Two Pathway details shape this request:
+    Two Pathway details shape the request:
 
-    * ``/v1/inputs`` reports *file*-level metadata taken from the connector, so
-      it carries only ``path`` — the ``user_id`` the post-processor puts on each
-      chunk is not there. Ownership therefore has to come from the key.
+    * ``/v1/inputs`` reports *file*-level metadata straight from the connector,
+      so it carries the ``path`` but not the ``user_id`` the post-processor puts
+      on each chunk. Ownership therefore has to come out of the key.
     * The endpoint filters the metadata list but zips the statuses against the
       *unfiltered* one, so asking it to filter would misalign every status.
 
     ponytail: hence we fetch every file and match the prefix here. Ceiling:
-    O(all files in the bucket) per call, fine for a personal install. Upgrade
-    path: filter server-side once Pathway aligns the two lists.
+    O(all documents in the index) per call, fine for a personal install.
+    Upgrade path: filter server-side once Pathway aligns the two lists.
     """
     entries = await _post(settings, "/v1/inputs", {"return_status": True})
 
     prefix = user_prefix(user_id)
-    ready: set[str] = set()
+    documents: list[IndexedDocument] = []
     for entry in entries:
         path = str(entry.get("path", ""))
-        if not path.startswith(prefix) or entry.get("_indexing_status") != "INDEXED":
+        if not path.startswith(prefix):
             continue
-        if parsed := parse_key(path):
-            ready.add(parsed["document_id"])
-    return ready
+        if (parsed := parse_key(path)) is None:
+            continue
+        documents.append(
+            IndexedDocument(
+                document_id=parsed["document_id"],
+                source_id=parsed["source_id"],
+                filename=parsed["filename"],
+                web_url=entry.get("web_url") or None,
+                size_bytes=_as_int(entry.get("size")),
+                modified_at=_as_int(entry.get("modified_at")) or 0,
+                ready=entry.get("_indexing_status") == "INDEXED",
+            )
+        )
+    return documents

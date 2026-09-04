@@ -67,9 +67,19 @@ def build(
             # The canonical "open in Drive" link. Built rather than requested:
             # webViewLink is not among the fields Pathway asks Drive for.
             web_url=f"https://drive.google.com/file/d/{metadata['id']}/view",
+            # Drive reports it as a string, and omits it entirely for its own
+            # formats, which are not blobs until they are exported.
+            size=_int_or_none(metadata.get("size")),
         )
 
     return conform(table.filter(readable(pw.this._metadata)), description)
+
+
+def _int_or_none(value: Any) -> int | None:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _filename(metadata: dict[str, Any]) -> str:

@@ -1,4 +1,4 @@
-"""Readiness comes from Pathway, so pin the shape we expect back from it.
+"""The document list comes from Pathway, so pin the shape we expect back.
 
 Uses a mock transport rather than a stubbed function: the request body, the
 prefix matching and the status handling are all part of what can break.
@@ -22,12 +22,12 @@ def settings() -> Settings:
     return Settings(jwt_secret="x" * 40, openrouter_api_key="k")
 
 
-def entry(user_id: UUID, document_id: UUID, status: str) -> dict:
+def entry(user_id: UUID, document_id: UUID, status: str, **extra) -> dict:
     return {
         "path": build_key(user_id, uuid4(), document_id, "doc.pdf"),
         "_indexing_status": status,
         "modified_at": 1,
-    }
+    } | extra
 
 
 @pytest.fixture
@@ -47,6 +47,7 @@ def pathway(request):
 
 
 ALICE_READY = uuid4()
+CONNECTED = uuid4()
 ALICE_PENDING = uuid4()
 BOB_READY = uuid4()
 
@@ -58,25 +59,54 @@ PAYLOAD = [
 ]
 
 
-@pytest.mark.parametrize("pathway", [PAYLOAD], indirect=True)
-async def test_only_own_indexed_documents_are_ready(pathway):
-    ready = await retriever.ready_document_ids(settings(), ALICE)
+async def documents_of(user_id: UUID) -> dict[str, retriever.IndexedDocument]:
+    found = await retriever.indexed_documents(settings(), user_id)
+    return {document.document_id: document for document in found}
 
-    assert ready == {str(ALICE_READY)}
-    # Not another user's file, not one still ingesting, not a stray object.
-    assert str(BOB_READY) not in ready
-    assert str(ALICE_PENDING) not in ready
+
+@pytest.mark.parametrize("pathway", [PAYLOAD], indirect=True)
+async def test_only_this_user_s_documents_come_back(pathway):
+    documents = await documents_of(ALICE)
+
+    # Not another user's file, and not a stray object outside the key layout.
+    assert set(documents) == {str(ALICE_READY), str(ALICE_PENDING)}
+    assert documents[str(ALICE_READY)].ready
+    assert not documents[str(ALICE_PENDING)].ready
 
 
 @pytest.mark.parametrize("pathway", [PAYLOAD], indirect=True)
 async def test_status_is_requested_without_a_server_side_filter(pathway):
     """Pathway zips statuses against the unfiltered list, so we must not filter there."""
-    await retriever.ready_document_ids(settings(), ALICE)
+    await documents_of(ALICE)
 
     assert pathway["url"].endswith("/v1/inputs")
     assert pathway["body"] == {"return_status": True}
 
 
+@pytest.mark.parametrize(
+    "pathway",
+    [[entry(ALICE, CONNECTED, "INDEXED", web_url="https://notion.so/p", size=4096)]],
+    indirect=True,
+)
+async def test_a_connected_document_carries_where_to_open_it(pathway):
+    """Uploads get a presigned link; everything else has to say so itself."""
+    document = (await documents_of(ALICE))[str(CONNECTED)]
+
+    assert document.web_url == "https://notion.so/p"
+    assert document.size_bytes == 4096
+
+
+@pytest.mark.parametrize(
+    "pathway", [[entry(ALICE, CONNECTED, "INDEXED", size="not a number")]], indirect=True
+)
+async def test_metadata_that_makes_no_sense_is_dropped_not_fatal(pathway):
+    """Metadata crosses JSON from a connector we do not control."""
+    document = (await documents_of(ALICE))[str(CONNECTED)]
+
+    assert document.size_bytes is None
+    assert document.web_url is None
+
+
 @pytest.mark.parametrize("pathway", [[]], indirect=True)
-async def test_nothing_is_ready_when_the_indexer_knows_no_files(pathway):
-    assert await retriever.ready_document_ids(settings(), ALICE) == set()
+async def test_an_empty_index_lists_nothing(pathway):
+    assert await documents_of(ALICE) == {}

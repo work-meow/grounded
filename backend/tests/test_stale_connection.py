@@ -49,9 +49,9 @@ async def test_a_dropped_connection_is_retried_once(flaky_indexer):
 
 
 @pytest.mark.parametrize("flaky_indexer", [(1, [])], indirect=True)
-async def test_readiness_is_retried_too(flaky_indexer):
+async def test_the_document_list_is_retried_too(flaky_indexer):
     """Otherwise one dead connection shows every file as still processing."""
-    assert await retriever.ready_document_ids(settings(), ALICE) == set()
+    assert await retriever.indexed_documents(settings(), ALICE) == []
     assert flaky_indexer["n"] == 2
 
 

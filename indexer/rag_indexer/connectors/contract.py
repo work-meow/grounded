@@ -8,7 +8,8 @@ Everything downstream of the index reads exactly four things off a document:
 * ``modified_at`` and ``seen_at`` — unix seconds, required by Pathway's
   ``DocumentStore`` for its statistics table;
 * ``web_url`` — where a citation opens the original, for documents that live
-  somewhere else. Uploads leave it unset and get a presigned link instead.
+  somewhere else. Uploads leave it unset and get a presigned link instead;
+* ``size`` — bytes, when the service says. Only so the file list can show one.
 
 Only the S3 connector produces that shape for free, because the API wrote those
 keys itself. Google Drive reports ``id``/``name``/``modifiedTime``; the polling
@@ -40,6 +41,7 @@ def describe(
     filename: str,
     modified_at: float,
     web_url: str | None = None,
+    size: int | None = None,
 ) -> dict:
     """The metadata for one remote document, in our shape.
 
@@ -52,6 +54,7 @@ def describe(
         "modified_at": int(modified_at),
         "seen_at": int(time.time()),
         "web_url": web_url,
+        "size": size,
     }
 
 

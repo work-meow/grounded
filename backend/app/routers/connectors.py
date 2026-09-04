@@ -1,0 +1,149 @@
+"""Connecting and disconnecting a source.
+
+Three endpoints and one rule that shapes all of them: a credential goes in and
+never comes back out. There is no read endpoint for a configuration, no field
+echoed in an error, and nothing about a connector in a log line beyond its id —
+because the only reason to read one back would be to show it to somebody, and
+the person who typed it already has it.
+"""
+
+import uuid
+from datetime import datetime
+
+from fastapi import APIRouter, HTTPException, status
+from pydantic import BaseModel, Field
+from rag_shared.connectors import REQUIRED_FIELDS, Kind
+from sqlalchemy import delete as sql_delete
+from sqlalchemy import func, select
+
+from app import connectors
+from app.deps import SessionDep, SettingsDep, UserDep
+from app.models import Source
+
+router = APIRouter(prefix="/api/connectors", tags=["connectors"])
+
+
+class ConnectorOut(BaseModel):
+    id: uuid.UUID
+    kind: Kind
+    name: str
+    created_at: datetime
+
+
+class ConnectorsOut(BaseModel):
+    """The list, plus what the UI needs to explain how to add one."""
+
+    sources: list[ConnectorOut]
+    #: False when this deployment has no SECRETS_KEY, so the UI can say why
+    #: rather than offering a form that will fail.
+    enabled: bool
+    #: Whom to share a Drive folder with. Empty when Drive is not set up here.
+    gdrive_service_account_email: str
+    #: Which fields each kind needs, so the form and the API cannot disagree.
+    required_fields: dict[Kind, list[str]]
+
+
+class ConnectorIn(BaseModel):
+    kind: Kind
+    name: str = Field(min_length=1, max_length=200)
+    config: dict[str, str]
+
+
+@router.get("")
+async def list_connectors(
+    user_id: UserDep, session: SessionDep, settings: SettingsDep
+) -> ConnectorsOut:
+    rows = (
+        (
+            await session.execute(
+                select(Source)
+                .where(Source.user_id == user_id, Source.sealed_config.is_not(None))
+                .order_by(Source.created_at)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return ConnectorsOut(
+        sources=[
+            ConnectorOut(id=row.id, kind=Kind(row.kind), name=row.name, created_at=row.created_at)
+            for row in rows
+            # A kind this build no longer knows would break the response model
+            # for every other source in the list.
+            if row.kind in {kind.value for kind in Kind}
+        ],
+        enabled=connectors.sealer(settings) is not None,
+        gdrive_service_account_email=settings.gdrive_service_account_email,
+        required_fields={kind: list(fields) for kind, fields in REQUIRED_FIELDS.items()},
+    )
+
+
+@router.post("", status_code=status.HTTP_201_CREATED)
+async def add_connector(
+    body: ConnectorIn, user_id: UserDep, session: SessionDep, settings: SettingsDep
+) -> ConnectorOut:
+    sealer = connectors.sealer(settings)
+    if sealer is None:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "Подключение источников не настроено на этом сервере",
+        )
+
+    used = await session.scalar(
+        select(func.count())
+        .select_from(Source)
+        .where(Source.user_id == user_id, Source.sealed_config.is_not(None))
+    )
+    if (used or 0) >= connectors.MAX_SOURCES_PER_USER:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"Больше {connectors.MAX_SOURCES_PER_USER} источников подключить нельзя",
+        )
+
+    try:
+        config = connectors.clean_config(body.kind, body.config)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
+
+    source = Source(
+        user_id=user_id,
+        kind=body.kind.value,
+        name=body.name.strip(),
+        sealed_config=sealer.seal(config),
+    )
+    session.add(source)
+    await session.commit()
+    await session.refresh(source)
+
+    # After the commit: the manifest must never name a source the database does
+    # not have. If this fails the row stays, unpublished, and the next change
+    # republishes it — the user sees a source that is not indexing yet, which is
+    # recoverable, rather than an index rebuilt around a row that vanished.
+    await connectors.publish(settings, session)
+
+    return ConnectorOut(
+        id=source.id, kind=body.kind, name=source.name, created_at=source.created_at
+    )
+
+
+@router.delete("/{source_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def remove_connector(
+    source_id: uuid.UUID, user_id: UserDep, session: SessionDep, settings: SettingsDep
+) -> None:
+    source = (
+        await session.execute(
+            select(Source).where(
+                Source.id == source_id,
+                Source.user_id == user_id,
+                Source.sealed_config.is_not(None),
+            )
+        )
+    ).scalar_one_or_none()
+    if source is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Источник не найден")
+
+    await session.execute(sql_delete(Source).where(Source.id == source.id))
+    await session.commit()
+    # Only now, so that a failed publish leaves the index one restart behind
+    # rather than pointing at a source that is gone.
+    await connectors.publish(settings, session)

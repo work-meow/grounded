@@ -1,4 +1,4 @@
-"""The API process: auth, files, chats.
+"""The API process: auth, documents, connected sources, chats.
 
 Everything it serves lives under /api, which is also how Traefik tells it apart
 from the frontend on the same hostname. One consequence worth knowing: /docs and
@@ -16,7 +16,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app import retriever
 from app.config import get_settings
 from app.db import engine
-from app.routers import auth, chats, sources
+from app.routers import auth, chats, connectors, sources
 
 
 @asynccontextmanager
@@ -45,6 +45,7 @@ app.add_middleware(
 
 app.include_router(auth.router)
 app.include_router(sources.router)
+app.include_router(connectors.router)
 app.include_router(chats.router)
 
 

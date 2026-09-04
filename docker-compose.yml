@@ -84,6 +84,9 @@ services:
     <<: *logging
     image: ${IMAGE_PREFIX:-ghcr.io/monitizationrsya/rag}-indexer:${IMAGE_TAG:-latest}
     pull_policy: always
+    # Also how a new connected source takes effect: a Pathway graph is fixed
+    # once built, so the indexer exits (75) when the manifest changes and comes
+    # back with the new source wired in. Seconds, and no embedding re-paid.
     restart: unless-stopped
     depends_on:
       minio: {condition: service_healthy}
@@ -96,6 +99,10 @@ services:
       S3_PATH_STYLE: "true"
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
       EMBEDDING_MODEL: ${EMBEDDING_MODEL}
+      # Opens the credentials the API sealed into the connector manifest.
+      SECRETS_KEY: ${SECRETS_KEY}
+      GDRIVE_CREDENTIALS_JSON: ${GDRIVE_CREDENTIALS_JSON:-}
+      REFRESH_INTERVAL_S: ${REFRESH_INTERVAL_S:-600}
       CACHE_DIR: /data/cache
       PORT: "8666"
     volumes:
@@ -136,6 +143,8 @@ services:
       PATHWAY_URL: http://indexer:8666
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
       AGENT_MODEL: ${AGENT_MODEL}
+      SECRETS_KEY: ${SECRETS_KEY}
+      GDRIVE_SERVICE_ACCOUNT_EMAIL: ${GDRIVE_SERVICE_ACCOUNT_EMAIL:-}
       CORS_ORIGINS: '["https://${APP_DOMAIN}"]'
     networks: [rag, dokploy-network]
     healthcheck:

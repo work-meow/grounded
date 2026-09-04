@@ -9,7 +9,7 @@ import json
 import uuid
 
 import pytest
-from rag_shared.connectors import ConnectorSpec, Kind, dump_manifest, load_manifest
+from rag_shared.connectors import Kind, SealedSource, dump_manifest, load_manifest
 from rag_shared.crypto import InvalidToken, Sealer, generate_key
 
 KEY = generate_key()
@@ -35,20 +35,20 @@ CONFIGS = {
 }
 
 
-def _spec(kind: Kind, **overrides) -> ConnectorSpec:
-    return ConnectorSpec(
+def _sealed(kind: Kind, **overrides) -> SealedSource:
+    return SealedSource(
         source_id=overrides.pop("source_id", uuid.uuid4()),
         user_id=USER,
         kind=kind,
         name=overrides.pop("name", kind.value),
-        config=overrides.pop("config", dict(CONFIGS[kind])),
+        sealed_config=SEALER.seal(overrides.pop("config", dict(CONFIGS[kind]))),
     )
 
 
 def test_every_kind_survives_the_round_trip():
-    specs = [_spec(kind) for kind in CONFIGS]
+    specs = [_sealed(kind) for kind in CONFIGS]
 
-    back = {spec.kind: spec for spec in load_manifest(dump_manifest(specs, SEALER), SEALER)}
+    back = {spec.kind: spec for spec in load_manifest(dump_manifest(specs), SEALER)}
 
     assert back.keys() == CONFIGS.keys()
     for kind, config in CONFIGS.items():
@@ -57,26 +57,26 @@ def test_every_kind_survives_the_round_trip():
 
 
 def test_no_credential_is_written_down():
-    raw = dump_manifest([_spec(kind) for kind in CONFIGS], SEALER)
+    raw = dump_manifest([_sealed(kind) for kind in CONFIGS])
 
     assert b"topsecret" not in raw, "a credential reached the bucket in the clear"
     assert b"1AbCdEfGh" not in raw, "even a folder id is somebody's private information"
 
 
 def test_the_bytes_are_stable_for_an_unchanged_list():
-    """The indexer restarts on a changed ETag, so key order must not churn."""
-    specs = [_spec(kind) for kind in CONFIGS]
+    """The indexer restarts on a changed ETag; an unchanged list must not move it.
 
-    first = json.loads(dump_manifest(specs, SEALER))
-    second = json.loads(dump_manifest(list(reversed(specs)), SEALER))
+    This is why the API carries the sealed blob around rather than opening and
+    re-sealing it: Fernet picks a fresh IV every time, so re-sealing would make
+    every write look like a change and restart the index for nothing.
+    """
+    sources = [_sealed(kind) for kind in CONFIGS]
 
-    assert [entry["source_id"] for entry in first["sources"]] == [
-        entry["source_id"] for entry in second["sources"]
-    ]
+    assert dump_manifest(sources) == dump_manifest(list(reversed(sources)))
 
 
 def test_a_wrong_key_opens_nothing():
-    raw = dump_manifest([_spec(Kind.NOTION)], SEALER)
+    raw = dump_manifest([_sealed(Kind.NOTION)])
 
     assert load_manifest(raw, Sealer(generate_key())) == []
 
@@ -98,8 +98,8 @@ def test_a_tampered_seal_is_refused():
 )
 def test_one_bad_entry_costs_only_that_source(damage):
     """The alternative is a user's typo taking down everyone else's index."""
-    good, bad = _spec(Kind.NOTION), _spec(Kind.YANDEX)
-    payload = json.loads(dump_manifest([good, bad], SEALER))
+    good, bad = _sealed(Kind.NOTION), _sealed(Kind.YANDEX)
+    payload = json.loads(dump_manifest([good, bad]))
     payload["sources"] = [
         damage(entry) if entry["source_id"] == str(bad.source_id) else entry
         for entry in payload["sources"]
@@ -111,10 +111,10 @@ def test_one_bad_entry_costs_only_that_source(damage):
 
 
 def test_a_config_missing_a_required_field_is_refused():
-    spec = _spec(Kind.YANDEX, config={"token": "y0_x"})  # no path
-
-    assert spec.missing_fields() == ("path",)
-    assert load_manifest(dump_manifest([spec], SEALER), SEALER) == []
+    """The API checks this too; the indexer checks again because it must."""
+    assert (
+        load_manifest(dump_manifest([_sealed(Kind.YANDEX, config={"token": "y0_x"})]), SEALER) == []
+    )
 
 
 @pytest.mark.parametrize(

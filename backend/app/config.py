@@ -35,6 +35,17 @@ class Settings(BaseSettings):
     s3_path_style: bool = False
     max_upload_bytes: int = 64 * 1024 * 1024
 
+    # --- connected sources ----------------------------------------------------
+    # Seals a connector's credentials before they reach the database or the
+    # bucket (rag_shared.crypto). The same value as the indexer's SECRETS_KEY,
+    # which is what opens them again. Empty disables connected sources rather
+    # than storing anything in the clear.
+    secrets_key: str = ""
+    # Shown to the user so they know whom to share a Drive folder with. Only the
+    # address: the key itself belongs to the indexer, the one process that
+    # actually reads Drive.
+    gdrive_service_account_email: str = ""
+
     # --- Pathway indexer ------------------------------------------------------
     pathway_url: str = "http://localhost:8666"
     pathway_timeout_s: float = 30.0
@@ -42,7 +53,9 @@ class Settings(BaseSettings):
 
     # --- agent ----------------------------------------------------------------
     openrouter_api_key: str
-    agent_model: str = "anthropic/claude-sonnet-4-5"
+    # $0.25 per million tokens in, $2 out — cheaper than gemini-2.5-flash, which
+    # this replaced, and it follows the citation instructions more reliably.
+    agent_model: str = "openai/gpt-5-mini"
     agent_temperature: float = 0.0
     # Hard ceiling so a confused agent cannot run away with the bill.
     max_tool_calls_per_run: int = 5

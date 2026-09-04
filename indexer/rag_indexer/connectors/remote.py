@@ -174,6 +174,7 @@ class _PollingSubject(ConnectorSubject):
             filename=file.filename,
             modified_at=file.modified_at,
             web_url=file.web_url,
+            size=file.size if file.size is not None else len(payload),
         )
         self._add(api.ref_scalar(file.external_id), payload, json.dumps(metadata).encode())
         return True

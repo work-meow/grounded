@@ -38,9 +38,14 @@ class User(Base):
 class Source(Base):
     """A place documents come from.
 
-    For the MVP the only kind is ``files`` and each user gets exactly one,
-    created on first upload. The table exists because the S3 layout and the
-    connector roadmap (Drive, GitHub, Notion) are keyed on it.
+    ``files`` is the implicit one: every user gets exactly one, created on their
+    first upload, and it needs no configuration. The rest are connectors the
+    user adds — Drive, Notion, Dropbox, OneDrive, Яндекс.Диск — and those carry
+    a credential, which is why ``sealed_config`` exists.
+
+    Their documents are not in :class:`Document`. Nothing fetches them, so there
+    is nothing to record: they are listed from the index, which is the only
+    process that has ever seen them.
     """
 
     __tablename__ = "sources"
@@ -51,6 +56,10 @@ class Source(Base):
     )
     kind: Mapped[str] = mapped_column(String(32), nullable=False, default="files")
     name: Mapped[str] = mapped_column(String(200), nullable=False)
+    # Fernet over the connector's configuration (rag_shared.crypto). Null for
+    # ``files``, which has nothing to configure. Never leaves the process: it is
+    # written here and copied into the manifest, and no response carries it.
+    sealed_config: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = _created_at()
 
     documents: Mapped[list["Document"]] = relationship(

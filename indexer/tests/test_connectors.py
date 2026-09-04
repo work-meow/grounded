@@ -248,4 +248,4 @@ def test_the_metadata_handed_to_pathway_is_ours():
 
     (metadata,) = subject.added
     assert parse_key(metadata["path"])["user_id"] == str(USER)
-    assert metadata.keys() == {"path", "modified_at", "seen_at", "web_url"}
+    assert metadata.keys() == {"path", "modified_at", "seen_at", "web_url", "size"}

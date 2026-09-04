@@ -7,8 +7,14 @@
 # afterwards.) CI builds them (.github/workflows/build.yml); the server pulls.
 #
 # PostgreSQL is NOT here: the box already runs one (postgres1-hajnvy on
-# dokploy-network) and a second instance would only compete for the 3.8 GB of
-# RAM this server has. DATABASE_URL points at it.
+# dokploy-network) and a second instance would only compete for memory with it.
+# DATABASE_URL points at the existing one.
+#
+# mem_limit on every service is a blast radius, not a target. The host carries
+# other people's production, and a limit is what keeps one runaway container
+# from taking the machine instead of just itself. Measured steady state, for
+# reference when adjusting: indexer 400 MB, minio 350 MB, backend 120 MB,
+# frontend 100 MB.
 #
 # Everything is reached through the existing Traefik on one hostname:
 #   /api/*  -> backend      /*  -> frontend
@@ -39,7 +45,9 @@ services:
     volumes:
       - minio-data:/data
     networks: [rag, dokploy-network]
-    mem_limit: 512m
+    # MinIO grows its own caches; 350 MB against a 512 MB cap was closer than
+    # anything should sit to being killed.
+    mem_limit: 1g
     healthcheck:
       test: ["CMD", "mc", "ready", "local"]
       interval: 10s
@@ -102,9 +110,10 @@ services:
       timeout: 5s
       retries: 3
       start_period: 90s
-    # The Rust engine plus the in-memory vector and BM25 indexes live here;
-    # this is the one service worth giving room on a 3.8 GB box.
-    mem_limit: 1300m
+    # The Rust engine plus the in-memory vector and BM25 indexes live here, and
+    # both grow with the corpus. An OOM kill costs a full re-index, so this is
+    # the service that gets room.
+    mem_limit: 2g
 
   backend:
     <<: *logging
@@ -136,7 +145,9 @@ services:
       timeout: 5s
       retries: 3
       start_period: 40s
-    mem_limit: 640m
+    # An upload is buffered in memory before it reaches S3, so the ceiling has
+    # to clear MAX_UPLOAD_BYTES (64 MB) with room for a second one alongside.
+    mem_limit: 768m
     labels:
       - traefik.enable=true
       - traefik.docker.network=dokploy-network
@@ -168,7 +179,7 @@ services:
       timeout: 5s
       retries: 3
       start_period: 20s
-    mem_limit: 320m
+    mem_limit: 448m
     labels:
       - traefik.enable=true
       - traefik.docker.network=dokploy-network

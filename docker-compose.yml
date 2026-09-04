@@ -1,5 +1,10 @@
 # Deployment for the Dokploy host.
 #
+# Images are pulled, never built here. This box has 2 vCPU and 4 GB of RAM and
+# already carries other production services; building the three images on it
+# once filled ~29 GB with BuildKit cache and took the machine down. CI builds
+# them (.github/workflows/build.yml) and the server only pulls.
+#
 # PostgreSQL is NOT here: the box already runs one (postgres1-hajnvy on
 # dokploy-network) and a second instance would only compete for the 3.8 GB of
 # RAM this server has. DATABASE_URL points at it.
@@ -56,9 +61,8 @@ services:
     restart: "no"
 
   indexer:
-    build:
-      context: .
-      dockerfile: indexer/Dockerfile
+    image: ${IMAGE_PREFIX:-ghcr.io/monitizationrsya/rag}-indexer:${IMAGE_TAG:-latest}
+    pull_policy: always
     restart: unless-stopped
     depends_on:
       minio: {condition: service_healthy}
@@ -81,9 +85,8 @@ services:
     mem_limit: 1300m
 
   backend:
-    build:
-      context: .
-      dockerfile: backend/Dockerfile
+    image: ${IMAGE_PREFIX:-ghcr.io/monitizationrsya/rag}-backend:${IMAGE_TAG:-latest}
+    pull_policy: always
     restart: unless-stopped
     depends_on:
       minio: {condition: service_healthy}
@@ -121,12 +124,10 @@ services:
       - traefik.http.services.rag-api.loadbalancer.server.port=8000
 
   frontend:
-    build:
-      context: .
-      dockerfile: frontend/Dockerfile
-      args:
-        # Empty on purpose: the UI calls /api on its own origin.
-        NEXT_PUBLIC_API_URL: ""
+    # NEXT_PUBLIC_API_URL is baked in at build time as "" — the UI calls /api on
+    # its own origin. See .github/workflows/build.yml.
+    image: ${IMAGE_PREFIX:-ghcr.io/monitizationrsya/rag}-frontend:${IMAGE_TAG:-latest}
+    pull_policy: always
     restart: unless-stopped
     networks: [rag, dokploy-network]
     mem_limit: 320m

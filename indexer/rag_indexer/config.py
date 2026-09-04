@@ -27,5 +27,6 @@ class IndexerSettings(BaseSettings):
     # --- server ---------------------------------------------------------------
     host: str = "0.0.0.0"
     port: int = 8666
+    log_level: str = "INFO"
     # Embeddings are cached here, so a restart does not re-pay for every chunk.
     cache_dir: str = "./Cache"

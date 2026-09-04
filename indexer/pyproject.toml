@@ -17,24 +17,23 @@ dependencies = [
     "pathway>=0.32",
     "openai~=1.60",
     "tiktoken>=0.5",
-    # UnstructuredParser handles PDF/DOCX/PPTX/XLSX/TXT/MD from one code path.
-    # Installed directly rather than via pathway[xpack-llm-docs], which drags in
-    # docling + paddleocr + torch.
+    # Parsing, one library per format (see rag_indexer/parsers.py). Together
+    # ~14 MB, against ~300 MB plus NLTK corpora for `unstructured` — which also
+    # could not read a PDF without pulling torch, and spent 7.6 s on a DOCX
+    # that python-docx handles in 34 ms.
     #
-    # ponytail: the `pdf` extra is deliberately omitted — it pulls
-    # unstructured-inference + torch + CUDA (~2 GB) for layout detection that
-    # only `strategy="hi_res"` uses. We parse with `strategy="fast"`, which
-    # needs pdfminer.six alone and is the right call for digital PDFs.
-    # Ceiling: scanned/image-only PDFs yield no text. Upgrade path: add the
-    # `pdf` extra and switch the parser to hi_res (or OCR) for those files.
-    "unstructured[docx,pptx,xlsx,md]>=0.18,<0.19",
-    "pdfminer-six>=20250506",
-    "pypdf>=5",
+    # ponytail: pypdfium2 extracts embedded text, so a scanned PDF yields
+    # nothing. Ceiling: image-only documents. Upgrade path: detect empty output
+    # and fall back to an OCR pass.
+    "pypdfium2>=5",
+    "python-docx>=1.2",
+    "python-pptx>=1.0",
+    "openpyxl>=3.1",
     "pydantic-settings>=2.11",
 ]
 
 [dependency-groups]
-dev = ["pytest>=8.4", "ruff>=0.14"]
+dev = ["pytest>=8.4", "ruff>=0.14", "fpdf2>=2.8"]  # fpdf2 builds PDFs for the parser tests
 
 # A path dependency rather than a uv workspace: a workspace resolves to one
 # lockfile and one virtualenv, and Pathway's ~1.5 GB dependency tree has no

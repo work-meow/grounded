@@ -28,13 +28,11 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 FROM python:3.13-slim-bookworm
 
 ENV PYTHONUNBUFFERED=1 \
-    NLTK_DATA=/opt/nltk_data \
     PATH="/app/.venv/bin:$PATH"
 
-# libmagic is how unstructured sniffs file types.
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends libmagic1 \
-    && rm -rf /var/lib/apt/lists/*
+# No system packages and no NLTK corpora: formats are sniffed from magic bytes
+# and parsed by pypdfium2 / python-docx / python-pptx / openpyxl, none of which
+# need anything from the OS.
 
 # The user exists before the copies so ownership can be set by COPY itself.
 # A `chown -R` afterwards rewrites every file's metadata, and Docker stores a
@@ -45,10 +43,6 @@ RUN useradd --system --uid 10001 rag \
 
 COPY --from=builder --chown=rag:rag /shared /shared
 COPY --from=builder --chown=rag:rag /app /app
-
-# unstructured fetches these on first use. Baking them in keeps the first
-# upload from depending on nltk's servers being up.
-RUN python -m nltk.downloader -d $NLTK_DATA punkt_tab averaged_perceptron_tagger_eng
 
 USER rag
 

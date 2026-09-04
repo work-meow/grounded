@@ -11,6 +11,7 @@ bucket, so a newly uploaded file becomes searchable without restarting anything,
 and a deleted object drops out of the index on its own.
 """
 
+import logging
 import os
 
 import pathway as pw
@@ -21,12 +22,40 @@ from pathway.stdlib.indexing import (
 )
 from pathway.xpacks.llm.document_store import DocumentStore
 from pathway.xpacks.llm.embedders import OpenAIEmbedder
-from pathway.xpacks.llm.parsers import UnstructuredParser
 from pathway.xpacks.llm.servers import DocumentStoreServer
 from pathway.xpacks.llm.splitters import TokenCountSplitter
 from rag_shared.doc_key import PREFIX, tenant_metadata
 
 from rag_indexer.config import IndexerSettings
+from rag_indexer.parsers import parse_document
+
+
+class _DropPollingNoise(logging.Filter):
+    """Pathway's S3 connector reports every poll at INFO, roughly twice a second.
+
+    It says the same thing whether or not anything changed, so it buries the
+    events that matter. Attached to the handler rather than the logger: a
+    filter on a logger is not applied to records that propagate up to it.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        return "pending download tasks" not in record.getMessage()
+
+
+def configure_logging(level: str) -> None:
+    """Own the logging config before Pathway does.
+
+    ``logging.basicConfig`` is a no-op once the root logger has handlers, so
+    configuring here wins; ``pw.run(default_logging=False)`` keeps Pathway from
+    trying at all.
+    """
+    logging.basicConfig(
+        level=level.upper(),
+        format="%(asctime)s %(levelname)-7s %(message)s",
+        datefmt="%Y-%m-%dT%H:%M:%S",
+    )
+    for handler in logging.getLogger().handlers:
+        handler.addFilter(_DropPollingNoise())
 
 
 def build_store(settings: IndexerSettings) -> DocumentStore:
@@ -53,14 +82,6 @@ def build_store(settings: IndexerSettings) -> DocumentStore:
         ),
     )
 
-    # "paged" keeps `page_number` on the metadata, which is what lets a citation
-    # say "contract.pdf, стр. 14". strategy="fast" parses digital PDFs with
-    # pdfminer and never loads a layout model.
-    parser = UnstructuredParser(
-        chunking_mode="paged",
-        partition_kwargs={"strategy": "fast"},
-    )
-
     embedder = OpenAIEmbedder(
         model=settings.embedding_model,
         api_key=settings.openrouter_api_key,
@@ -83,7 +104,7 @@ def build_store(settings: IndexerSettings) -> DocumentStore:
     return DocumentStore(
         docs=files,
         retriever_factory=retriever_factory,
-        parser=parser,
+        parser=pw.udf(parse_document),
         splitter=TokenCountSplitter(
             min_tokens=settings.chunk_min_tokens,
             max_tokens=settings.chunk_max_tokens,
@@ -94,15 +115,18 @@ def build_store(settings: IndexerSettings) -> DocumentStore:
 
 def main() -> None:
     settings = IndexerSettings()  # type: ignore[call-arg]
+    configure_logging(settings.log_level)
+
     # Building the store probes the embedder once to learn its dimension, so a
     # bad key or an unreachable endpoint fails loudly here rather than on the
     # first upload.
     store = build_store(settings)
     server = DocumentStoreServer(settings.host, settings.port, store)
-    print(f"indexer listening on http://{settings.host}:{settings.port}", flush=True)
+    logging.info("indexer listening on http://%s:%s", settings.host, settings.port)
     server.run(
         with_cache=True,
         cache_backend=pw.persistence.Backend.filesystem(settings.cache_dir),
+        default_logging=False,
     )
 
 

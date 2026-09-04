@@ -8,6 +8,12 @@
 
 const BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
+// Without a deadline a stalled request leaves the UI spinning forever. The
+// streaming endpoint is deliberately exempt: an answer may legitimately take
+// minutes, and it carries its own abort signal.
+const TIMEOUT_MS = 30_000;
+const UPLOAD_TIMEOUT_MS = 5 * 60_000;
+
 export class ApiError extends Error {
   constructor(
     readonly status: number,
@@ -17,11 +23,20 @@ export class ApiError extends Error {
   }
 }
 
-async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+async function request<T>(
+  path: string,
+  init: RequestInit = {},
+  timeoutMs: number = TIMEOUT_MS,
+): Promise<T> {
   const response = await fetch(`${BASE}${path}`, {
     ...init,
     credentials: "include",
-    headers: { ...(init.body instanceof FormData ? {} : { "Content-Type": "application/json" }), ...init.headers },
+    signal: init.signal ?? AbortSignal.timeout(timeoutMs),
+    headers: {
+      // FormData must set its own Content-Type: the boundary is part of it.
+      ...(init.body instanceof FormData ? {} : { "Content-Type": "application/json" }),
+      ...init.headers,
+    },
   });
 
   if (!response.ok) {
@@ -87,7 +102,12 @@ export const api = {
   upload: (file: File) => {
     const form = new FormData();
     form.append("file", file);
-    return request<DocumentOut>("/api/sources", { method: "POST", body: form });
+    // Uploads run to 64 MB, which the default deadline would cut short.
+    return request<DocumentOut>(
+      "/api/sources",
+      { method: "POST", body: form },
+      UPLOAD_TIMEOUT_MS,
+    );
   },
   deleteDocument: (id: string) =>
     request<void>(`/api/sources/${id}`, { method: "DELETE" }),

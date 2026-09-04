@@ -8,6 +8,7 @@ the database would tell the model that a document it can perfectly well search
 does not exist.
 """
 
+import asyncio
 import uuid
 
 import httpx
@@ -110,20 +111,55 @@ async def test_read_document_narrows_to_the_owner_and_the_document(monkeypatch):
 def test_one_model_client_for_the_process():
     """Built per request it would open a connection pool per question and never
     close one. The cache is what keeps that from happening."""
-    first = agent._model("m", "k", 0.0, "minimal", 120.0)
-    second = agent._model("m", "k", 0.0, "minimal", 120.0)
+    first = agent._model("m", "k", 0.0, "minimal")
+    second = agent._model("m", "k", 0.0, "minimal")
 
     assert first is second
-    assert agent._model("other", "k", 0.0, "minimal", 120.0) is not first
-
-
-def test_the_model_client_will_not_wait_forever():
-    """A hung provider holds the SSE stream open with it."""
-    client = agent._model("m", "k", 0.0, "", 45.0)
-
-    assert client.request_timeout == 45.0
+    assert agent._model("other", "k", 0.0, "minimal") is not first
 
 
 def test_the_reasoning_effort_reaches_the_client():
-    assert agent._model("m", "k", 0.0, "minimal", 120.0).reasoning == {"effort": "minimal"}
-    assert agent._model("m", "k", 0.0, "", 120.0).reasoning is None
+    assert agent._model("m", "k", 0.0, "minimal").reasoning == {"effort": "minimal"}
+    assert agent._model("m", "k", 0.0, "").reasoning is None
+
+
+def test_the_client_is_built_without_a_timeout_on_purpose():
+    """Setting one hangs it. ChatOpenRouter accepts `timeout` and
+    `request_timeout` without complaint and then never completes a request —
+    a call that answers in a second sat past five minutes on the deployment
+    with either set. The turn is bounded in answer() instead."""
+    client = agent._model("m", "k", 0.0, "minimal")
+
+    assert client.request_timeout is None
+
+
+async def test_a_turn_that_never_finishes_is_cut_off(monkeypatch):
+    """A provider that accepts the connection and then says nothing would hold
+    the SSE stream open behind it for as long as it liked. The call-count
+    middleware bounds how many requests a turn makes, never how long one takes.
+    """
+
+    class _NeverAnswers:
+        async def astream(self, _inputs, **_kwargs):
+            await asyncio.sleep(30)
+            yield None, {}  # pragma: no cover - never reached
+
+    monkeypatch.setattr(agent, "create_agent", lambda **_kwargs: _NeverAnswers())
+    settings = Settings(jwt_secret="x" * 40, openrouter_api_key="k", agent_timeout_s=0.05)
+
+    with pytest.raises(TimeoutError):
+        async for _ in agent.answer(settings, USER, "вопрос", []):
+            pass
+
+
+async def test_a_turn_that_answers_is_left_alone(monkeypatch):
+    class _Answers:
+        async def astream(self, _inputs, **_kwargs):
+            yield type("Chunk", (), {"content": "сорок"})(), {"langgraph_node": "model"}
+
+    monkeypatch.setattr(agent, "create_agent", lambda **_kwargs: _Answers())
+    settings = Settings(jwt_secret="x" * 40, openrouter_api_key="k", agent_timeout_s=5.0)
+
+    events = [event async for event in agent.answer(settings, USER, "вопрос", [])]
+    assert events[0] == ("token", "сорок")
+    assert events[-1][0] == "citations"

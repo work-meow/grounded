@@ -5,6 +5,7 @@ gives us the call ceilings. What lives here is the tool surface and the
 citation bookkeeping that turns retrieved chunks into clickable sources.
 """
 
+import asyncio
 import logging
 import re
 from collections.abc import AsyncIterator
@@ -165,9 +166,7 @@ def _build_tools(settings: Settings, user_id: UUID, citations: _Citations) -> li
 
 
 @lru_cache(maxsize=1)
-def _model(
-    model: str, api_key: str, temperature: float, effort: str = "", timeout: float = 120.0
-) -> ChatOpenRouter:
+def _model(model: str, api_key: str, temperature: float, effort: str = "") -> ChatOpenRouter:
     """One chat client for the whole process.
 
     Built per request, this would open a fresh HTTP connection pool on every
@@ -175,14 +174,14 @@ def _model(
     the tools do — so a single instance is safe to share.
     """
     reasoning = {"effort": effort} if effort else None
+    # No timeout here, and not for want of trying: ChatOpenRouter takes both
+    # `timeout` and `request_timeout` without complaint and then never
+    # completes a request — measured on the deployment, a call that answers in
+    # one second hangs past five minutes with either of them set. It does not
+    # accept an http_async_client to configure instead. The turn is bounded in
+    # answer() rather than here.
     return ChatOpenRouter(
-        model=model,
-        api_key=api_key,
-        temperature=temperature,
-        reasoning=reasoning,
-        # Without it the client waits on the provider for as long as the
-        # provider likes, and the SSE stream on the other side waits with it.
-        timeout=timeout,
+        model=model, api_key=api_key, temperature=temperature, reasoning=reasoning
     )
 
 
@@ -220,7 +219,6 @@ async def answer(
             settings.openrouter_api_key,
             settings.agent_temperature,
             settings.agent_reasoning_effort,
-            settings.agent_timeout_s,
         ),
         tools=_build_tools(settings, user_id, citations),
         system_prompt=SYSTEM_PROMPT,
@@ -237,11 +235,18 @@ async def answer(
     inputs = {"messages": [*_history(history), HumanMessage(question)]}
     # Kept so the citation markers can be read back out of the finished answer.
     parts: list[str] = []
-    async for chunk, meta in agent.astream(inputs, stream_mode="messages"):
-        if meta.get("langgraph_node") != "model":
-            continue
-        if text := _text_of(chunk):
-            parts.append(text)
-            yield "token", text
+
+    # The whole turn, not one request: a provider that accepts the connection
+    # and then says nothing would otherwise hold the SSE stream open behind it
+    # for as long as it liked. The call-count middleware bounds how many
+    # requests a turn makes, never how long one takes. On expiry the caller
+    # sees a failed turn and keeps whatever tokens had arrived.
+    async with asyncio.timeout(settings.agent_timeout_s):
+        async for chunk, meta in agent.astream(inputs, stream_mode="messages"):
+            if meta.get("langgraph_node") != "model":
+                continue
+            if text := _text_of(chunk):
+                parts.append(text)
+                yield "token", text
 
     yield "citations", citations.referenced_in("".join(parts))

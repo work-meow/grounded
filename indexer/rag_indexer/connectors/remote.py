@@ -21,7 +21,7 @@ import logging
 import time
 from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Literal, Protocol
 
 import pathway as pw
 from pathway.internals import api
@@ -79,12 +79,14 @@ class _PollingSubject(ConnectorSubject):
         spec: ConnectorSpec,
         refresh_interval: float,
         size_limit: int,
+        mode: Literal["streaming", "static"] = "streaming",
     ) -> None:
         super().__init__(datasource_name=spec.kind.value)
         self._source = source
         self._spec = spec
         self._refresh_interval = refresh_interval
         self._size_limit = size_limit
+        self._mode = mode
         self._label = f"{spec.kind.value} source {spec.source_id}"
 
     @property
@@ -109,6 +111,11 @@ class _PollingSubject(ConnectorSubject):
             started = time.monotonic()
             self._poll(indexed)
             self.commit()
+            # Static mode reads the source once and ends the stream, matching
+            # what Pathway's own connectors do with it. It is what lets a test
+            # run a connector through a real graph rather than around it.
+            if self._mode == "static":
+                return
             time.sleep(max(0.0, self._refresh_interval - (time.monotonic() - started)))
 
     def _poll(self, indexed: dict[str, int]) -> None:
@@ -186,6 +193,7 @@ def polling_table(
     spec: ConnectorSpec,
     refresh_interval: float,
     size_limit: int,
+    mode: Literal["streaming", "static"] = "streaming",
 ) -> pw.Table:
     """The input table for one polled source, already in our metadata shape."""
     return pw.io.python.read(
@@ -194,7 +202,13 @@ def polling_table(
             spec=spec,
             refresh_interval=refresh_interval,
             size_limit=size_limit,
+            mode=mode,
         ),
+        # Pathway deprecates `format` in favour of a schema and next(**values),
+        # but that path has no key, so it cannot express an upsert or a delete —
+        # which is the whole point of a source that changes. Pathway's own
+        # gdrive and pyfilesystem connectors call it exactly like this, and emit
+        # the same warning at graph build; one line per connector, at startup.
         format="binary",
         name=f"{spec.kind.value}-{spec.source_id}",
     )

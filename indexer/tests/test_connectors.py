@@ -249,3 +249,47 @@ def test_the_metadata_handed_to_pathway_is_ours():
     (metadata,) = subject.added
     assert parse_key(metadata["path"])["user_id"] == str(USER)
     assert metadata.keys() == {"path", "modified_at", "seen_at", "web_url", "size"}
+
+
+# --- through a real graph ----------------------------------------------------
+
+
+def test_a_polled_source_produces_rows_pathway_can_read():
+    """The one check that the metadata survives the trip into the engine.
+
+    Everything above tests the diff in isolation. This runs the connector as
+    Pathway actually runs it — subject, JSON metadata, Json column — because
+    that is the boundary where a shape mistake would show up only in
+    production, as documents that index but belong to nobody.
+    """
+    import pathway as pw
+    from rag_shared.doc_key import tenant_metadata
+
+    from rag_indexer.connectors.remote import polling_table
+
+    body = "Срок уведомления — 45 дней".encode()
+    table = polling_table(
+        _Service([_file(name="Договор.md")], body=body),
+        spec=ConnectorSpec(
+            source_id=SOURCE, user_id=USER, kind=Kind.NOTION, name="test", config={}
+        ),
+        refresh_interval=0,
+        size_limit=1 << 20,
+        mode="static",
+    )
+
+    rows: list[dict] = []
+    pw.io.subscribe(table, on_change=lambda key, row, time, is_addition: rows.append(row))
+    pw.run(monitoring_level=pw.MonitoringLevel.NONE)
+
+    (row,) = rows
+    assert row["data"] == body
+
+    metadata = row["_metadata"]
+    metadata = metadata.as_dict() if hasattr(metadata, "as_dict") else dict(metadata)
+    # The post-processor the DocumentStore applies is what turns the path into
+    # the fields the tenant filter matches on.
+    _, tagged = tenant_metadata("", metadata)
+    assert tagged["user_id"] == str(USER)
+    assert tagged["source_id"] == str(SOURCE)
+    assert tagged["filename"] == "Договор.md"

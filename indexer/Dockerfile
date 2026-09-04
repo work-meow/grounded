@@ -36,16 +36,20 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends libmagic1 \
     && rm -rf /var/lib/apt/lists/*
 
-COPY --from=builder /shared /shared
-COPY --from=builder /app /app
+# The user exists before the copies so ownership can be set by COPY itself.
+# A `chown -R` afterwards rewrites every file's metadata, and Docker stores a
+# full copy of everything it touched in a new layer — that alone added 1.85 GB.
+RUN useradd --system --uid 10001 rag \
+    && mkdir -p /data/cache \
+    && chown -R rag:rag /data
+
+COPY --from=builder --chown=rag:rag /shared /shared
+COPY --from=builder --chown=rag:rag /app /app
 
 # unstructured fetches these on first use. Baking them in keeps the first
 # upload from depending on nltk's servers being up.
 RUN python -m nltk.downloader -d $NLTK_DATA punkt_tab averaged_perceptron_tagger_eng
 
-RUN useradd --system --uid 10001 rag \
-    && mkdir -p /data/cache \
-    && chown -R rag:rag /app /shared /data
 USER rag
 
 EXPOSE 8666

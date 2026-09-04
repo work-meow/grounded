@@ -25,7 +25,8 @@ ENV NODE_ENV=production \
     HOSTNAME=0.0.0.0
 
 RUN useradd --system --uid 10001 nextjs
-COPY --from=builder /app/public ./public
+# No public/ copy: the app serves no static assets from it, and Next.js treats
+# the directory as optional.
 COPY --from=builder --chown=nextjs:nextjs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nextjs /app/.next/static ./.next/static
 

@@ -29,10 +29,14 @@ FROM python:3.13-slim-bookworm
 ENV PYTHONUNBUFFERED=1 \
     PATH="/app/.venv/bin:$PATH"
 
-COPY --from=builder /shared /shared
-COPY --from=builder /app /app
+# The user exists before the copies so ownership can be set by COPY itself.
+# A `chown -R` afterwards would store a second full copy of everything in its
+# own layer — see indexer/Dockerfile, where that cost 1.85 GB.
+RUN useradd --system --uid 10001 rag
 
-RUN useradd --system --uid 10001 rag && chown -R rag:rag /app /shared
+COPY --from=builder --chown=rag:rag /shared /shared
+COPY --from=builder --chown=rag:rag /app /app
+
 USER rag
 
 EXPOSE 8000

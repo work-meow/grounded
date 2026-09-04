@@ -15,12 +15,24 @@ export default function ChatPage() {
   const [activeId, setActiveId] = useState<string | null>(null);
   const [messages, setMessages] = useState<MessageOut[]>([]);
   const [draft, setDraft] = useState("");
-  const [streaming, setStreaming] = useState<{ text: string; citations: Citation[] } | null>(
-    null,
-  );
+  // Tagged with the chat it belongs to, so switching chats simply stops
+  // matching instead of needing the effect to reach in and clear it.
+  const [streaming, setStreaming] = useState<{
+    chatId: string;
+    text: string;
+    citations: Citation[];
+  } | null>(null);
   const [loading, setLoading] = useState(true);
 
+  // The stream only counts while its chat is the open one.
+  const active = streaming?.chatId === activeId ? streaming : null;
+
   const bottomRef = useRef<HTMLDivElement>(null);
+  // Aborts the answer in flight when the chat is switched or the page unmounts,
+  // so a stream cannot outlive the view that asked for it.
+  const inFlight = useRef<AbortController | null>(null);
+
+  useEffect(() => () => inFlight.current?.abort(), []);
 
   // Load the chat list once, opening the newest chat or creating the first one.
   useEffect(() => {
@@ -45,6 +57,9 @@ export default function ChatPage() {
 
   useEffect(() => {
     if (!activeId) return;
+    // Whatever was streaming belonged to the previous chat.
+    inFlight.current?.abort();
+
     let cancelled = false;
     api
       .messages(activeId)
@@ -57,49 +72,69 @@ export default function ChatPage() {
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, streaming?.text]);
+  }, [messages, active?.text]);
 
   const send = useCallback(async () => {
     const question = draft.trim();
-    if (!question || !activeId || streaming) return;
+    // `active`, not `streaming`: an aborted stream from another chat is left
+    // behind deliberately and must not block this one.
+    if (!question || !activeId || active) return;
 
     setDraft("");
     setMessages((current) => [...current, localMessage("user", question)]);
-    setStreaming({ text: "", citations: [] });
+    setStreaming({ chatId: activeId, text: "", citations: [] });
 
+    // The answer is accumulated here rather than read back out of state: a
+    // setState updater must stay pure, and React calls it twice in StrictMode.
+    let text = "";
+    let citations: Citation[] = [];
     let failed = false;
+
+    const controller = new AbortController();
+    inFlight.current = controller;
+
     try {
-      await ask(activeId, question, {
-        onToken: (text) =>
-          setStreaming((current) => ({ ...(current ?? { citations: [] }), text: (current?.text ?? "") + text })),
-        onCitations: (citations) =>
-          setStreaming((current) => ({ text: current?.text ?? "", citations })),
-        onError: (message) => {
-          failed = true;
-          toast.error(message);
+      await ask(
+        activeId,
+        question,
+        {
+          onToken: (chunk) => {
+            text += chunk;
+            setStreaming({ chatId: activeId, text, citations });
+          },
+          onCitations: (received) => {
+            citations = received;
+            setStreaming({ chatId: activeId, text, citations });
+          },
+          onError: (message) => {
+            failed = true;
+            toast.error(message);
+          },
         },
-      });
+        controller.signal,
+      );
     } catch (cause) {
+      // An abort is a chat switch or an unmount, not a failure to report.
+      if (controller.signal.aborted) return;
       failed = true;
       toast.error(describe(cause));
+    } finally {
+      if (inFlight.current === controller) inFlight.current = null;
     }
 
-    // Move whatever arrived into the transcript so a partial answer is kept.
-    setStreaming((current) => {
-      if (current?.text) {
-        setMessages((existing) => [
-          ...existing,
-          localMessage("assistant", current.text, current.citations),
-        ]);
-      } else if (!failed) {
-        toast.error("Пустой ответ от модели");
-      }
-      return null;
-    });
+    if (controller.signal.aborted) return;
+
+    setStreaming(null);
+    if (text) {
+      // Keep a partial answer rather than losing the turn.
+      setMessages((current) => [...current, localMessage("assistant", text, citations)]);
+    } else if (!failed) {
+      toast.error("Пустой ответ от модели");
+    }
 
     // The first question becomes the chat title on the server.
     api.chats().then(setChats).catch(() => undefined);
-  }, [activeId, draft, streaming]);
+  }, [activeId, draft, active]);
 
   async function newChat() {
     try {
@@ -170,7 +205,7 @@ export default function ChatPage() {
           <div className="mx-auto flex w-full max-w-3xl flex-col gap-6 p-4 sm:p-6">
             {loading ? (
               <Skeleton className="h-20 w-full" />
-            ) : messages.length === 0 && !streaming ? (
+            ) : messages.length === 0 && !active ? (
               <EmptyState />
             ) : null}
 
@@ -178,10 +213,18 @@ export default function ChatPage() {
               <Bubble key={message.id} message={message} />
             ))}
 
-            {streaming && (
+            {active && (
               <Bubble
-                message={localMessage("assistant", streaming.text, streaming.citations)}
-                pending={streaming.text === ""}
+                // A fixed id: localMessage() would mint a fresh UUID on every
+                // token as the answer streams in.
+                message={{
+                  id: "streaming",
+                  role: "assistant",
+                  content: active.text,
+                  citations: active.citations,
+                  created_at: "",
+                }}
+                pending={active.text === ""}
               />
             )}
             <div ref={bottomRef} />
@@ -206,12 +249,12 @@ export default function ChatPage() {
             />
             <Button
               onClick={() => void send()}
-              disabled={!draft.trim() || !activeId || streaming !== null}
+              disabled={!draft.trim() || !activeId || active !== null}
               size="icon"
               className="size-11 shrink-0"
               aria-label="Отправить"
             >
-              {streaming ? (
+              {active ? (
                 <Loader2 className="size-4 animate-spin" />
               ) : (
                 <SendHorizontal className="size-4" />

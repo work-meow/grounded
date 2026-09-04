@@ -1,3 +1,11 @@
+"""The API process: auth, files, chats.
+
+Everything it serves lives under /api, which is also how Traefik tells it apart
+from the frontend on the same hostname. One consequence worth knowing: /docs and
+/openapi.json sit outside that prefix, so in the deployed setup they are routed
+to the frontend and 404. They work locally, which is where they are useful.
+"""
+
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -42,4 +50,10 @@ app.include_router(chats.router)
 
 @app.get("/api/health")
 async def health() -> dict[str, str]:
+    """Liveness, not readiness: is this process answering at all.
+
+    Deliberately touches neither PostgreSQL nor the indexer. Docker restarts a
+    container that fails its healthcheck, and restarting the API because the
+    database blinked would turn one outage into two.
+    """
     return {"status": "ok"}

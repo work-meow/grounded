@@ -39,11 +39,15 @@ export default function ChatPage() {
     let cancelled = false;
     (async () => {
       try {
-        let list = await api.chats();
-        if (list.length === 0) list = [await api.createChat()];
+        const existing = await api.chats();
+        const list = existing.length > 0 ? existing : [await api.createChat()];
         if (cancelled) return;
         setChats(list);
-        setActiveId(list[0].id);
+        // `?? null` rather than an assertion: the list is non-empty by
+        // construction two lines up, and saying so with `!` would be the one
+        // place in this file where a type is asserted rather than proved. An
+        // empty list leaves no chat open, which the sidebar already handles.
+        setActiveId(list[0]?.id ?? null);
       } catch (cause) {
         if (!cancelled) toast.error(describe(cause));
       } finally {

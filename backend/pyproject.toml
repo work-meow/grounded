@@ -1,0 +1,59 @@
+[project]
+name = "rag-backend"
+version = "0.1.0"
+description = "Personal RAG API: FastAPI + LangChain agent over a Pathway live index"
+# Pinned to 3.13: the indexer's `unstructured` caps at <3.14 and both processes
+# are kept on one interpreter version to avoid surprises.
+requires-python = ">=3.13,<3.14"
+dependencies = [
+    # API
+    "fastapi>=0.141",
+    "uvicorn[standard]>=0.38",
+    "python-multipart>=0.0.20",
+    "pydantic-settings>=2.11",
+    "httpx>=0.28",
+    "pyjwt>=2.10",
+    # application database (users / sources / documents / chats / messages)
+    "sqlalchemy[asyncio]>=2.0.40",
+    "asyncpg>=0.30",
+    "alembic>=1.16",
+    # object storage for the original files
+    "aioboto3>=15",
+    # agent
+    "langchain>=1.0",
+    "langchain-openrouter>=0.2",
+]
+
+# NOTE: `pathway` is deliberately NOT a dependency here. It pins langchain<0.4,
+# which collides with the agent's langchain>=1.0. The API only ever talks to the
+# indexer over HTTP (/v1/retrieve), so it needs no Pathway code. See indexer/.
+
+[project.scripts]
+rag-token = "app.token:main"
+
+[dependency-groups]
+dev = ["pytest>=8.4", "pytest-asyncio>=1.0", "ruff>=0.14"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "ASYNC", "S", "RUF"]
+# RUF001-003: the product speaks Russian, so Cyrillic in strings and docstrings
+# is intentional, not a homoglyph typo.
+ignore = ["S101", "RUF001", "RUF002", "RUF003"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["app", "shared"]

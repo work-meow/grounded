@@ -98,11 +98,16 @@ async def list_documents(
     )
     # Every source the user has, so that both populations can be labelled from
     # one query rather than a join for one and a lookup for the other.
-    names = dict(
-        (
+    #
+    # Built with a comprehension, not dict(result): a SQLAlchemy Result has a
+    # keys() method, so dict() takes it for a mapping and starts subscripting
+    # it, which a Result does not support.
+    names = {
+        row.id: row.name
+        for row in (
             await session.execute(select(Source.id, Source.name).where(Source.user_id == user_id))
-        ).tuples()
-    )
+        ).all()
+    }
     indexed = await _indexed(settings, user_id)
 
     documents = [

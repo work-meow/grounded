@@ -140,12 +140,33 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # Object storage, because connecting a source writes the manifest there
+      # and the API refuses to pretend it succeeded if it cannot.
+      - name: object storage
+        run: |
+          docker run -d --name minio --network host \
+            -e MINIO_ROOT_USER=rag -e MINIO_ROOT_PASSWORD=ragragrag \
+            minio/minio:latest server /data
+          for _ in $(seq 1 30); do
+            curl -fsS localhost:9000/minio/health/live >/dev/null 2>&1 && break
+            sleep 2
+          done
+          docker run --rm --network host --entrypoint sh minio/mc:latest -c \
+            "mc alias set local http://localhost:9000 rag ragragrag && mc mb -p local/rag"
+
       - name: backend migrates and answers
         run: |
+          # Throwaway, generated per run: a Fernet key is url-safe base64 of 32
+          # bytes, which is exactly what this produces.
           docker run -d --name backend --network host \
             -e DATABASE_URL=postgresql+asyncpg://rag:rag@localhost:5432/rag \
             -e JWT_SECRET=smoke-test-secret-of-at-least-32-characters \
             -e OPENROUTER_API_KEY=smoke \
+            -e SECRETS_KEY="$(openssl rand -base64 32 | tr '+/' '-_')" \
+            -e COOKIE_SECURE=false \
+            -e S3_ENDPOINT_URL=http://localhost:9000 \
+            -e S3_ACCESS_KEY_ID=rag -e S3_SECRET_ACCESS_KEY=ragragrag \
+            -e S3_PATH_STYLE=true \
             "$IMAGE-backend:$TAG"
           for _ in $(seq 1 30); do
             curl -fsS localhost:8000/api/health >/dev/null 2>&1 && break
@@ -164,6 +185,48 @@ jobs:
           asyncio.run(main())
           "
 
+      # The queries themselves, against a real database. The unit tests cannot
+      # reach this: they never open a connection, so a mistake in how a result
+      # is consumed passes every one of them and 500s on the first request.
+      - name: the API answers for a real user
+        run: |
+          TOKEN=$(docker exec backend rag-token --email smoke@test.local | tail -1)
+          jar=$(mktemp)
+          api() { curl -sS -b "$jar" -c "$jar" -o /tmp/body -w '%{http_code}' "$@"; }
+
+          test "$(api -X POST localhost:8000/api/auth/login \
+                    -H 'Content-Type: application/json' \
+                    -d "{\"token\":\"$TOKEN\"}")" = 200
+
+          echo "--- documents"
+          test "$(api localhost:8000/api/sources)" = 200 && cat /tmp/body
+
+          echo "--- connectors"
+          test "$(api localhost:8000/api/connectors)" = 200 && cat /tmp/body
+
+          echo "--- connect a source (writes the manifest)"
+          test "$(api -X POST localhost:8000/api/connectors \
+                    -H 'Content-Type: application/json' \
+                    -d '{"kind":"notion","name":"smoke","config":{"token":"ntn_smoke"}}')" = 201
+          id=$(python3 -c "import json;print(json.load(open('/tmp/body'))['id'])")
+
+          echo "--- the manifest is there and carries no plaintext credential"
+          docker run --rm --network host --entrypoint sh minio/mc:latest -c \
+            "mc alias set local http://localhost:9000 rag ragragrag >/dev/null &&
+             mc cat local/rag/config/connectors.json" > /tmp/manifest
+          cat /tmp/manifest
+          if grep -q ntn_smoke /tmp/manifest; then
+            echo "the credential reached the bucket in the clear"
+            exit 1
+          fi
+
+          echo "--- both populations still list"
+          test "$(api localhost:8000/api/sources)" = 200
+
+          echo "--- disconnect"
+          test "$(api -X DELETE "localhost:8000/api/connectors/$id")" = 204
+          test "$(api -X DELETE "localhost:8000/api/connectors/$id")" = 404
+
       - name: indexer entrypoint imports
         run: docker run --rm "$IMAGE-indexer:$TAG" python -c "import rag_indexer.pipeline"
 
@@ -178,4 +241,7 @@ jobs:
 
       - name: logs on failure
         if: failure()
-        run: docker logs backend 2>&1 | tail -50; docker logs frontend 2>&1 | tail -20
+        run: |
+          docker logs backend 2>&1 | tail -60
+          docker logs frontend 2>&1 | tail -20
+          docker logs minio 2>&1 | tail -20

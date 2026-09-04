@@ -29,6 +29,37 @@ def _http() -> httpx.AsyncClient:
     return _client
 
 
+# A pooled connection the indexer has already closed fails on first use, before
+# the request is written: httpx reports RemoteProtocolError, and the caller sees
+# a question that simply did not work. Nothing is retried by default, so this is
+# where an idle stack quietly loses its first request after a pause — observed
+# in production as "Server disconnected without sending a response" from
+# search_knowledge, and as documents flipping back to "processing" for one poll.
+#
+# Retrying a POST is normally unsafe. These two are read-only queries that carry
+# their arguments in a body because they are too big for a URL, so a second
+# attempt cannot duplicate anything. It runs on a connection guaranteed to be
+# fresh, which is exactly what the failure asks for.
+_STALE_CONNECTION = (httpx.RemoteProtocolError, httpx.ConnectError)
+
+
+async def _post(settings: Settings, path: str, payload: dict[str, Any]) -> Any:
+    attempts = 2
+    for attempt in range(1, attempts + 1):
+        try:
+            response = await _http().post(
+                f"{settings.pathway_url}{path}",
+                json=payload,
+                timeout=settings.pathway_timeout_s,
+            )
+            response.raise_for_status()
+            return response.json()
+        except _STALE_CONNECTION:
+            if attempt == attempts:
+                raise
+    raise AssertionError("unreachable")  # pragma: no cover
+
+
 def _tenant_filter(user_id: UUID, document_id: UUID | None = None) -> str:
     """A JMESPath filter pinned to one user.
 
@@ -85,17 +116,12 @@ async def retrieve(
     k: int,
     document_id: UUID | None = None,
 ) -> list[Chunk]:
-    response = await _http().post(
-        f"{settings.pathway_url}/v1/retrieve",
-        json={
-            "query": query,
-            "k": k,
-            "metadata_filter": _tenant_filter(user_id, document_id),
-        },
-        timeout=settings.pathway_timeout_s,
+    hits = await _post(
+        settings,
+        "/v1/retrieve",
+        {"query": query, "k": k, "metadata_filter": _tenant_filter(user_id, document_id)},
     )
-    response.raise_for_status()
-    return [Chunk.from_hit(hit) for hit in response.json()]
+    return [Chunk.from_hit(hit) for hit in hits]
 
 
 async def ready_document_ids(settings: Settings, user_id: UUID) -> set[str]:
@@ -116,16 +142,11 @@ async def ready_document_ids(settings: Settings, user_id: UUID) -> set[str]:
     O(all files in the bucket) per call, fine for a personal install. Upgrade
     path: filter server-side once Pathway aligns the two lists.
     """
-    response = await _http().post(
-        f"{settings.pathway_url}/v1/inputs",
-        json={"return_status": True},
-        timeout=settings.pathway_timeout_s,
-    )
-    response.raise_for_status()
+    entries = await _post(settings, "/v1/inputs", {"return_status": True})
 
     prefix = user_prefix(user_id)
     ready: set[str] = set()
-    for entry in response.json():
+    for entry in entries:
         path = str(entry.get("path", ""))
         if not path.startswith(prefix) or entry.get("_indexing_status") != "INDEXED":
             continue

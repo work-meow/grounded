@@ -70,6 +70,11 @@ class _Citations:
         [2]..[8] under an answer whose text mentions none of them: chips that
         look like references to something the reader never sees. So the answer
         itself decides, and an answer that cites nothing gets no sources.
+
+        The numbers are kept as issued, gaps and all: an answer that cites only
+        the fifth chunk shows a single source labelled [5], because that is what
+        its own text points at. Renumbering the list would silently break the
+        tie between the marker in the sentence and the chip under it.
         """
         cited = {int(marker) for marker in _MARKER_RE.findall(answer)}
         return [item for item in self.items if item["n"] in cited]

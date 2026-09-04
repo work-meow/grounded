@@ -16,7 +16,7 @@ from app import agent
 from app.config import Settings
 from app.db import Session
 from app.deps import SessionDep, SettingsDep, UserDep
-from app.models import Chat, Document, Message
+from app.models import Chat, Message
 
 logger = logging.getLogger(__name__)
 
@@ -124,20 +124,13 @@ async def ask(
             .scalars()
             .all()
         )
-        documents = [
-            (row.id, row.filename)
-            for row in (await session.execute(select(Document).where(Document.user_id == user_id)))
-            .scalars()
-            .all()
-        ]
-
         session.add(Message(chat_id=chat_id, role="user", content=question, citations=[]))
         if chat.title == "Новый чат":
             chat.title = question[:80]
         await session.commit()
 
     return StreamingResponse(
-        _stream(settings, user_id, chat_id, question, list(reversed(history)), documents),
+        _stream(settings, user_id, chat_id, question, list(reversed(history))),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
@@ -153,7 +146,6 @@ async def _stream(
     chat_id: uuid.UUID,
     question: str,
     history: list[Message],
-    documents: list[tuple[uuid.UUID, str]],
 ) -> AsyncIterator[str]:
     """Relay the agent's events as SSE, saving the answer however the turn ends.
 
@@ -166,7 +158,7 @@ async def _stream(
     parts: list[str] = []
     citations: list[dict[str, Any]] = []
     try:
-        async for kind, payload in agent.answer(settings, user_id, question, history, documents):
+        async for kind, payload in agent.answer(settings, user_id, question, history):
             if kind == "token":
                 parts.append(payload)
                 yield _sse("token", payload)

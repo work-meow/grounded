@@ -5,6 +5,7 @@ gives us the call ceilings. What lives here is the tool surface and the
 citation bookkeeping that turns retrieved chunks into clickable sources.
 """
 
+import logging
 import re
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
@@ -21,6 +22,8 @@ from langchain_openrouter import ChatOpenRouter
 from app import retriever
 from app.config import Settings
 from app.models import Message
+
+logger = logging.getLogger(__name__)
 
 SYSTEM_PROMPT = """\
 Ты — ассистент по личной базе знаний пользователя.
@@ -93,12 +96,7 @@ def _render(chunks: list[retriever.Chunk], citations: _Citations) -> str:
     return "\n\n".join(lines)
 
 
-def _build_tools(
-    settings: Settings,
-    user_id: UUID,
-    documents: list[tuple[UUID, str]],
-    citations: _Citations,
-) -> list[BaseTool]:
+def _build_tools(settings: Settings, user_id: UUID, citations: _Citations) -> list[BaseTool]:
     """Tools bound to one user by closure.
 
     Binding at construction time (rather than passing the user through agent
@@ -119,9 +117,24 @@ def _build_tools(
     @tool
     async def list_sources() -> str:
         """Перечислить документы, доступные пользователю, с их идентификаторами."""
-        if not documents:
-            return "База знаний пуста — пользователь ещё не загрузил ни одного файла."
-        return "\n".join(f"{doc_id} — {name}" for doc_id, name in documents)
+        # Asked of the index, not the database, and only when the model calls
+        # this tool. The database knows about uploads; the index knows about
+        # those *and* everything reached through a connected source, which is
+        # the only place a Notion page or a Drive file exists at all. Doing it
+        # here rather than up front also keeps the cost off the common path —
+        # most turns only ever call search_knowledge.
+        try:
+            found = await retriever.indexed_documents(settings, user_id)
+        except Exception:
+            logger.exception("could not list the documents of %s", user_id)
+            return "Не удалось получить список документов. Используй search_knowledge."
+        if not found:
+            return "База знаний пуста — пользователь ещё ничего не загрузил и не подключил."
+        return "\n".join(
+            f"{document.document_id} — {document.filename}"
+            + ("" if document.ready else " (индексируется)")
+            for document in found
+        )
 
     @tool
     async def read_document(document_id: str, query: str) -> str:
@@ -137,8 +150,10 @@ def _build_tools(
             target = UUID(document_id)
         except ValueError:
             return f"Некорректный document_id: {document_id}"
-        if target not in {doc_id for doc_id, _ in documents}:
-            return "Документ не найден среди доступных пользователю."
+        # No membership check: retrieve() filters on user_id *and* document_id,
+        # so somebody else's document returns nothing rather than being refused.
+        # Parsing to UUID first is the guard that matters — it is what keeps the
+        # id out of the filter expression as anything but hex and dashes.
         chunks = await retriever.retrieve(
             settings, user_id, query, settings.retrieve_k, document_id=target
         )
@@ -179,7 +194,6 @@ async def answer(
     user_id: UUID,
     question: str,
     history: list[Message],
-    documents: list[tuple[UUID, str]],
 ) -> AsyncIterator[tuple[str, Any]]:
     """Stream ``("token", str)`` events, then one final ``("citations", list)``.
 
@@ -189,7 +203,7 @@ async def answer(
     citations = _Citations()
     agent = create_agent(
         model=_model(settings.agent_model, settings.openrouter_api_key, settings.agent_temperature),
-        tools=_build_tools(settings, user_id, documents, citations),
+        tools=_build_tools(settings, user_id, citations),
         system_prompt=SYSTEM_PROMPT,
         middleware=[
             ToolCallLimitMiddleware(

@@ -2,21 +2,25 @@
 name = "rag-indexer"
 version = "0.1.0"
 description = "Pathway live index: S3 -> parse -> chunk -> embed -> hybrid retrieval"
-# `unstructured` does not support 3.14 yet.
+# Pathway ships abi3 wheels, but 3.13 is the interpreter this dependency set is
+# actually exercised on, here and in CI. Nothing in the tree needs 3.14.
 requires-python = ">=3.13,<3.14"
 dependencies = [
     # the S3 key layout, shared with the API (../shared)
     "rag-shared",
     # Plain `pathway`, not pathway[xpack-llm]. The extra exists to satisfy the
-    # optional_imports guards in pw.xpacks.llm, but the only ones we hit are
-    # OpenAIEmbedder, UnstructuredParser, TokenCountSplitter, DocumentStore and
-    # DocumentStoreServer — openai, tiktoken and unstructured cover all of them.
-    # The extra would additionally pull litellm, cohere, llama-index,
-    # google-generativeai, instructor, fastmcp and langchain<0.4: ~300 MB of
-    # surface area this process never imports.
+    # optional_imports guards in pw.xpacks.llm, and the only ones this pipeline
+    # trips are OpenAIEmbedder, RecursiveSplitter, DocumentStore and
+    # DocumentStoreServer — covered by the three packages below. The extra would
+    # additionally pull litellm, cohere, llama-index, google-generativeai,
+    # instructor, fastmcp and langchain<0.4: ~300 MB never imported here, and a
+    # langchain pin that contradicts the one the agent needs.
     "pathway>=0.32",
     "openai~=1.60",
     "tiktoken>=0.5",
+    # RecursiveSplitter imports it lazily; without it the splitter raises at
+    # graph-build time rather than at import, which is a much worse place.
+    "langchain-text-splitters>=0.3",
     # Parsing, one library per format (see rag_indexer/parsers.py). Together
     # ~14 MB, against ~300 MB plus NLTK corpora for `unstructured` — which also
     # could not read a PDF without pulling torch, and spent 7.6 s on a DOCX
@@ -30,7 +34,6 @@ dependencies = [
     "python-pptx>=1.0",
     "openpyxl>=3.1",
     "pydantic-settings>=2.11",
-    "langchain-text-splitters>=0.3",
 ]
 
 [dependency-groups]

@@ -1,8 +1,9 @@
 # Images are built here, never on the server.
 #
-# The deployment host is a 2 vCPU / 4 GB box that also runs other production
-# services. Building three images on it once consumed ~29 GB of BuildKit cache
-# and took the machine down. GitHub's runners build; the server only pulls.
+# The deployment host is a 2 vCPU / 3.8 GB box that also runs other production
+# services. Building three images on it exhausted memory and took the machine
+# down, other people's services included. GitHub's runners build; the server
+# only pulls.
 name: build
 
 on:
@@ -34,12 +35,10 @@ jobs:
         working-directory: ${{ matrix.project }}
       - run: uv run ruff format --check .
         working-directory: ${{ matrix.project }}
+      # Required settings come from tests/conftest.py, so this is the same
+      # command that works on a fresh checkout with no environment at all.
       - run: uv run pytest -q
         working-directory: ${{ matrix.project }}
-        env:
-          # Settings are required fields; the tests never make a real call.
-          JWT_SECRET: test-secret-that-is-at-least-32-characters
-          OPENROUTER_API_KEY: test
 
   test-frontend:
     runs-on: ubuntu-latest

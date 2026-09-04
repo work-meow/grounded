@@ -2,8 +2,9 @@
 name = "rag-backend"
 version = "0.1.0"
 description = "Personal RAG API: FastAPI + LangChain agent over a Pathway live index"
-# Pinned to 3.13: the indexer's `unstructured` caps at <3.14 and both processes
-# are kept on one interpreter version to avoid surprises.
+# Pinned to 3.13 to match the indexer, which is pinned to the interpreter its
+# Pathway build is tested against. One version across both processes means one
+# set of wheels to reason about.
 requires-python = ">=3.13,<3.14"
 dependencies = [
     # the S3 key layout, shared with the indexer (../shared)

@@ -28,11 +28,18 @@ import pypdfium2 as pdfium
 _PDF_MAGIC = b"%PDF-"
 _ZIP_MAGIC = b"PK\x03\x04"
 
-# An OOXML file is a ZIP, and a ZIP can claim to hold far more than it does.
-# The indexer runs under a memory limit; being killed by one crafted upload
-# would take the whole in-memory index down and force a full rebuild. Uploads
-# are capped at 64 MB, so a hundredfold expansion is already generous.
-_MAX_UNCOMPRESSED_BYTES = 6 * 1024 * 1024 * 1024
+# An OOXML file is a ZIP, and a ZIP can be made to unpack into far more than it
+# is. The indexer runs under a memory limit; being killed by one crafted upload
+# takes the whole in-memory index with it and forces a rebuild.
+#
+# The number is anchored on what this process can hold, not on a compression
+# ratio. It used to be 6 GB — a hundredfold expansion of the 64 MB upload limit
+# — which sounds conservative and is three times the container's memory: an
+# archive that honestly declared 5 GB passed the check and then killed it.
+# Half a gigabyte is far more than any document anyone asks questions about
+# (the text budget below stops at roughly 16 MB of characters) and far inside
+# what the process survives.
+_MAX_UNCOMPRESSED_BYTES = 512 * 1024 * 1024
 
 # How much text one document may contribute to the index.
 #
@@ -47,6 +54,10 @@ _MAX_UNCOMPRESSED_BYTES = 6 * 1024 * 1024 * 1024
 # 8 million characters is roughly four thousand pages of prose: far beyond any
 # document a person actually asks questions about, and far short of the wall.
 _MAX_TEXT_CHARS = 8_000_000
+
+#: Read size while checking an archive. Big enough not to loop per kilobyte,
+#: small enough that the check itself holds nothing.
+_UNPACK_CHUNK_BYTES = 1024 * 1024
 
 logger = logging.getLogger(__name__)
 
@@ -133,9 +144,7 @@ def _pdf(contents: bytes) -> list[tuple[str, dict]]:
 def _ooxml(contents: bytes) -> list[tuple[str, dict]]:
     """DOCX, PPTX and XLSX are all ZIPs; the part names tell them apart."""
     with zipfile.ZipFile(io.BytesIO(contents)) as archive:
-        declared = sum(entry.file_size for entry in archive.infolist())
-        if declared > _MAX_UNCOMPRESSED_BYTES:
-            logger.warning("refusing a zip that unpacks to %d bytes", declared)
+        if not _unpacks_within_limit(archive):
             return []
         names = set(archive.namelist())
 
@@ -148,6 +157,33 @@ def _ooxml(contents: bytes) -> list[tuple[str, dict]]:
 
     logger.warning("zip archive is not a recognised Office document")
     return []
+
+
+def _unpacks_within_limit(archive: zipfile.ZipFile) -> bool:
+    """Whether the archive really unpacks to something this process can hold.
+
+    Decompressed rather than believed. The sizes in a zip's central directory
+    are the archive's own account of itself, and under-declaring them is exactly
+    how a bomb gets past a check that reads them — Python's zipfile decompresses
+    a member to its actual length, not its declared one.
+
+    So the members are read here, in chunks, and the read stops the moment the
+    running total passes the limit. That costs one extra decompression of an
+    honest document, which for the Office files people actually upload is
+    milliseconds; the alternative costs the process.
+    """
+    total = 0
+    for entry in archive.infolist():
+        with archive.open(entry) as member:
+            while block := member.read(_UNPACK_CHUNK_BYTES):
+                total += len(block)
+                if total > _MAX_UNCOMPRESSED_BYTES:
+                    logger.warning(
+                        "refusing a zip that unpacks past the %d byte limit",
+                        _MAX_UNCOMPRESSED_BYTES,
+                    )
+                    return False
+    return True
 
 
 def _docx(contents: bytes) -> list[tuple[str, dict]]:

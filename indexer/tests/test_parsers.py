@@ -111,21 +111,53 @@ def test_zip_that_is_not_an_office_document_is_ignored():
     assert parse_document(buffer.getvalue()) == []
 
 
-def test_a_zip_bomb_is_refused_before_anything_is_unpacked(monkeypatch):
-    """A file that claims to unpack to more than the cap is never opened.
+def _bomb() -> bytes:
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("word/document.xml", b"\0" * 4096)
+    return buffer.getvalue()
+
+
+def test_a_zip_bomb_is_refused_before_it_is_parsed(monkeypatch):
+    """A file that unpacks to more than the cap never reaches python-docx.
 
     The indexer runs under a memory limit and holds the index in RAM: being
     OOM-killed by one crafted upload would cost a full rebuild. The cap is
-    lowered here rather than building a real multi-gigabyte archive — what is
+    lowered here rather than building a real half-gigabyte archive — what is
     under test is the refusal, not zlib.
     """
     monkeypatch.setattr(parsers, "_MAX_UNCOMPRESSED_BYTES", 64)
 
-    buffer = io.BytesIO()
-    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
-        archive.writestr("word/document.xml", b"\0" * 4096)
+    assert parse_document(_bomb()) == []
 
-    assert parse_document(buffer.getvalue()) == []
+
+def test_the_size_a_zip_claims_is_not_what_is_checked(monkeypatch):
+    """Under-declaring is the whole trick, and zipfile decompresses a member to
+    its real length rather than its stated one. So the archive is unpacked and
+    counted, and an entry that swears it is empty is refused just the same."""
+    monkeypatch.setattr(parsers, "_MAX_UNCOMPRESSED_BYTES", 64)
+    real_infolist = zipfile.ZipFile.infolist
+
+    def lying_infolist(self):
+        entries = real_infolist(self)
+        for entry in entries:
+            entry.file_size = 0
+        return entries
+
+    monkeypatch.setattr(zipfile.ZipFile, "infolist", lying_infolist)
+
+    assert parse_document(_bomb()) == []
+
+
+def test_an_honest_document_is_not_refused_by_the_check():
+    """The check unpacks the whole archive; a real file must still survive it."""
+    document = Document()
+    document.add_paragraph("Суточные — 1400 рублей.")
+    buffer = io.BytesIO()
+    document.save(buffer)
+
+    ((text, _),) = parse_document(buffer.getvalue())
+    assert "1400" in text
 
 
 def test_an_enormous_document_is_trimmed_rather_than_indexed_whole(monkeypatch, caplog):

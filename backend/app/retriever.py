@@ -10,9 +10,9 @@ from typing import Any
 from uuid import UUID
 
 import httpx
+from rag_shared.doc_key import parse_key, user_prefix
 
 from app.config import Settings
-from shared.doc_key import parse_key, user_prefix
 
 _client: httpx.AsyncClient | None = None
 

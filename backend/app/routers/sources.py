@@ -5,6 +5,7 @@ from pathlib import PurePosixPath
 import httpx
 from fastapi import APIRouter, HTTPException, UploadFile, status
 from pydantic import BaseModel
+from rag_shared.doc_key import build_key
 from sqlalchemy import delete as sql_delete
 from sqlalchemy import select
 
@@ -12,7 +13,6 @@ from app import retriever, storage
 from app.config import Settings
 from app.deps import SessionDep, SettingsDep, UserDep
 from app.models import Document, Source
-from shared.doc_key import build_key
 
 router = APIRouter(prefix="/api/sources", tags=["sources"])
 

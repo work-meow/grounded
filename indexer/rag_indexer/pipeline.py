@@ -12,8 +12,6 @@ and a deleted object drops out of the index on its own.
 """
 
 import os
-import sys
-from pathlib import Path
 
 import pathway as pw
 from pathway.stdlib.indexing import (
@@ -26,16 +24,9 @@ from pathway.xpacks.llm.embedders import OpenAIEmbedder
 from pathway.xpacks.llm.parsers import UnstructuredParser
 from pathway.xpacks.llm.servers import DocumentStoreServer
 from pathway.xpacks.llm.splitters import TokenCountSplitter
+from rag_shared.doc_key import PREFIX, tenant_metadata
 
 from rag_indexer.config import IndexerSettings
-
-# ponytail: the S3 key layout is shared with the API, which lives in a separate
-# virtualenv (its langchain>=1.0 cannot coexist with Pathway's langchain<0.4).
-# A path insert is the cheapest way to keep one definition of the layout.
-# Ceiling: breaks if the two are deployed from different trees. Upgrade path:
-# publish `shared/` as a tiny package both depend on.
-sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "shared"))
-from doc_key import PREFIX, tenant_metadata
 
 
 def build_store(settings: IndexerSettings) -> DocumentStore:

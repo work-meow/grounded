@@ -3148,6 +3148,7 @@ dependencies = [
     { name = "pdfminer-six" },
     { name = "pydantic-settings" },
     { name = "pypdf" },
+    { name = "rag-shared" },
     { name = "unstructured", extra = ["docx", "md", "pptx", "xlsx"] },
 ]
 
@@ -3163,6 +3164,7 @@ requires-dist = [
     { name = "pdfminer-six", specifier = ">=20250506" },
     { name = "pydantic-settings", specifier = ">=2.11" },
     { name = "pypdf", specifier = ">=5" },
+    { name = "rag-shared", editable = "../shared" },
     { name = "unstructured", extras = ["docx", "pptx", "xlsx", "md"], specifier = ">=0.18,<0.19" },
 ]
 
@@ -3171,6 +3173,11 @@ dev = [
     { name = "pytest", specifier = ">=8.4" },
     { name = "ruff", specifier = ">=0.14" },
 ]
+
+[[package]]
+name = "rag-shared"
+version = "0.1.0"
+source = { editable = "../shared" }
 
 [[package]]
 name = "rapidfuzz"

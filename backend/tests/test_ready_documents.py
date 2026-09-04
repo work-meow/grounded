@@ -9,10 +9,10 @@ from uuid import UUID, uuid4
 
 import httpx
 import pytest
+from rag_shared.doc_key import build_key
 
 from app import retriever
 from app.config import Settings
-from shared.doc_key import build_key
 
 ALICE = UUID("11111111-1111-1111-1111-111111111111")
 BOB = UUID("22222222-2222-2222-2222-222222222222")

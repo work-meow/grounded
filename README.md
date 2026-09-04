@@ -29,6 +29,13 @@
 Два процесса, три внешних сервиса. Индексация живая: файл, попавший в S3,
 становится доступным для поиска сам, без перезапуска и без очередей.
 
+```
+backend/    FastAPI, агент, PostgreSQL          собственный venv
+indexer/    Pathway: парсинг, чанки, индекс     собственный venv
+shared/     раскладка ключей в S3               ставится в оба
+frontend/   Next.js
+```
+
 ## Почему так
 
 **Статус индексации нигде не дублируется.** В PostgreSQL нет колонки `status` —
@@ -49,7 +56,9 @@
 **Два virtualenv, а не один.** `pathway[xpack-llm]` пинит `langchain<0.4` ради
 адаптеров, которыми мы не пользуемся, и это несовместимо с `langchain>=1.0`,
 нужным агенту. Процессы общаются по HTTP, поэтому ни одному не нужно дерево
-зависимостей другого.
+зависимостей другого. `shared/` подключён к обоим как path-зависимость — не
+через uv workspace, потому что workspace сводится к одному lock-файлу и одному
+окружению, то есть ровно к тому, чего эти два проекта разделить не могут.
 
 ## Что нужно
 
@@ -68,7 +77,7 @@ psql rag -c "CREATE ROLE rag LOGIN PASSWORD 'rag'; GRANT ALL ON DATABASE rag TO 
 
 # 2. конфигурация — три файла, у каждого есть шаблон рядом
 cp backend/.env.example         backend/.env
-cp backend/indexer/.env.example backend/indexer/.env
+cp indexer/.env.example         indexer/.env
 cp frontend/.env.example        frontend/.env.local
 
 # секрет для подписи токенов
@@ -80,7 +89,7 @@ openssl rand -hex 32   # → JWT_SECRET в backend/.env
 ```bash
 # 3. зависимости
 cd backend         && uv sync && uv run alembic upgrade head
-cd backend/indexer && uv sync
+cd indexer         && uv sync
 cd frontend        && npm install
 ```
 
@@ -90,7 +99,7 @@ cd frontend        && npm install
 
 ```bash
 # индексер — поднимать первым, он проверяет ключ эмбеддингов на старте
-cd backend/indexer && uv run python -m rag_indexer.pipeline
+cd indexer && uv run python -m rag_indexer.pipeline
 
 # API
 cd backend && uv run uvicorn app.main:app --reload --port 8000
@@ -125,7 +134,7 @@ post-processor'ом, — включая перекрёстные запросы,
 **Инструмент агенту** — функция с `@tool` в `_build_tools`
 (`backend/app/agent.py`). Она автоматически замкнётся на текущего пользователя.
 
-**Коннектор** — новый вход в `build_store` (`backend/indexer/rag_indexer/pipeline.py`).
+**Коннектор** — новый вход в `build_store` (`indexer/rag_indexer/pipeline.py`).
 `DocumentStore` принимает список таблиц, так что Google Drive или SharePoint
 добавляются рядом с S3, а не вместо него. Метаданные должны нести `user_id`,
 иначе чанки будут недоступны никому — это и задумано.

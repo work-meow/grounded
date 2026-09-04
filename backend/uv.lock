@@ -1025,6 +1025,7 @@ dependencies = [
     { name = "pydantic-settings" },
     { name = "pyjwt" },
     { name = "python-multipart" },
+    { name = "rag-shared" },
     { name = "sqlalchemy", extra = ["asyncio"] },
     { name = "uvicorn", extra = ["standard"] },
 ]
@@ -1048,6 +1049,7 @@ requires-dist = [
     { name = "pydantic-settings", specifier = ">=2.11" },
     { name = "pyjwt", specifier = ">=2.10" },
     { name = "python-multipart", specifier = ">=0.0.20" },
+    { name = "rag-shared", editable = "../shared" },
     { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0.40" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.38" },
 ]
@@ -1058,6 +1060,11 @@ dev = [
     { name = "pytest-asyncio", specifier = ">=1.0" },
     { name = "ruff", specifier = ">=0.14" },
 ]
+
+[[package]]
+name = "rag-shared"
+version = "0.1.0"
+source = { editable = "../shared" }
 
 [[package]]
 name = "requests"

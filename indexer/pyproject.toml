@@ -5,6 +5,8 @@ description = "Pathway live index: S3 -> parse -> chunk -> embed -> hybrid retri
 # `unstructured` does not support 3.14 yet.
 requires-python = ">=3.13,<3.14"
 dependencies = [
+    # the S3 key layout, shared with the API (../shared)
+    "rag-shared",
     # xpack-llm brings the embedders, parsers, splitters, indexes and REST server.
     # It pins langchain<0.4 for adapters we do not use, which is exactly why this
     # lives in its own virtualenv, separate from the API's langchain>=1.0.
@@ -27,6 +29,12 @@ dependencies = [
 
 [dependency-groups]
 dev = ["pytest>=8.4", "ruff>=0.14"]
+
+# A path dependency rather than a uv workspace: a workspace resolves to one
+# lockfile and one virtualenv, which is exactly what this project and the API
+# cannot share.
+[tool.uv.sources]
+rag-shared = { path = "../shared", editable = true }
 
 [tool.ruff]
 line-length = 100

@@ -1,0 +1,19 @@
+[project]
+name = "rag-shared"
+version = "0.1.0"
+description = "The S3 key layout, shared by the API and the indexer"
+requires-python = ">=3.13,<3.14"
+# Stdlib only, deliberately: this is installed into two virtualenvs whose
+# dependency trees are incompatible with each other.
+dependencies = []
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["rag_shared"]

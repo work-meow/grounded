@@ -9,9 +9,9 @@ from uuid import UUID, uuid4
 
 import jmespath
 import pytest
+from rag_shared.doc_key import build_key, parse_key, tenant_metadata
 
 from app.retriever import Chunk, _tenant_filter
-from shared.doc_key import build_key, parse_key, tenant_metadata
 
 ALICE = UUID("11111111-1111-1111-1111-111111111111")
 BOB = UUID("22222222-2222-2222-2222-222222222222")

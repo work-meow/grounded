@@ -5,11 +5,13 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 
-# secrets & local config
+# secrets & local config — templates (.env.example) are committed, filled-in
+# copies never are
 .env
-.env.local
+.env.*
+!.env.example
 
-# pathway
+# pathway keeps its embedding cache here
 Cache/
 .pathway-storage/
 

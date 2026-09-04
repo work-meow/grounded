@@ -48,16 +48,17 @@ class DropboxSource:
     def list(self) -> Iterable[RemoteFile]:
         return [_as_file(entry) for entry in self._entries() if entry.get(".tag") == "file"]
 
-    def fetch(self, file: RemoteFile) -> bytes:
+    def fetch(self, file: RemoteFile, limit: int) -> bytes | None:
         self._authorize()
-        return self._http.request(
+        return self._http.download(
             "POST",
             f"{_CONTENT}/files/download",
+            limit=limit,
             # A header, so it has to be ASCII whatever the filename is. The path
             # is the file id, which is ASCII anyway; ensure_ascii keeps that
             # true if this ever becomes a real path.
             headers={"Dropbox-API-Arg": json.dumps({"path": file.external_id}, ensure_ascii=True)},
-        ).content
+        )
 
     def _entries(self) -> Iterator[dict[str, Any]]:
         self._authorize()

@@ -62,11 +62,11 @@ class OneDriveSource:
                     files.append(_as_file(item))
         return files
 
-    def fetch(self, file: RemoteFile) -> bytes:
+    def fetch(self, file: RemoteFile, limit: int) -> bytes | None:
         self._authorize()
-        return self._http.request(
-            "GET", f"{_GRAPH}/me/drive/items/{file.external_id}/content"
-        ).content
+        return self._http.download(
+            "GET", f"{_GRAPH}/me/drive/items/{file.external_id}/content", limit=limit
+        )
 
     def _root_url(self) -> str:
         if not self._path:

@@ -56,13 +56,13 @@ class YandexSource:
                     files.append(_as_file(item))
         return files
 
-    def fetch(self, file: RemoteFile) -> bytes:
+    def fetch(self, file: RemoteFile, limit: int) -> bytes | None:
         # The href is signed and expires in minutes, so it is fetched per
         # download rather than kept from the listing.
         href = self._http.json(
             "GET", f"{_API}/resources/download", params={"path": file.external_id}
         )["href"]
-        return self._downloads.request("GET", href).content
+        return self._downloads.download("GET", href, limit=limit)
 
     def _items(self, path: str) -> Iterator[dict[str, Any]]:
         for page in range(_MAX_PAGES_PER_FOLDER):

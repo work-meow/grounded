@@ -70,6 +70,31 @@ class Http:
             return response
         raise AssertionError("unreachable")  # pragma: no cover
 
+    def download(self, method: str, url: str, *, limit: int, **kwargs: Any) -> bytes | None:
+        """A response body, or None if it turned out to be larger than ``limit``.
+
+        Streamed rather than buffered. Every other size check in this system
+        happens before the download, using the size the service reported — but
+        that number is the service's word, and for Notion there is no number at
+        all. Reading ``.content`` would let a far end decide how much memory
+        this process uses, which is the failure that once took the indexer from
+        225 MB to 1.7 GB on a single file.
+        """
+        for attempt in range(1, _ATTEMPTS + 1):
+            last = attempt == _ATTEMPTS
+            try:
+                with self._client.stream(method, url, **kwargs) as response:
+                    if response.status_code in _RETRY_STATUSES and not last:
+                        self._wait(attempt, response.headers.get("Retry-After"))
+                        continue
+                    response.raise_for_status()
+                    return _read_bounded(response, limit)
+            except httpx.HTTPError:
+                if last:
+                    raise
+                self._wait(attempt, None)
+        raise AssertionError("unreachable")  # pragma: no cover
+
     def _wait(self, attempt: int, retry_after: str | None) -> None:
         delay = min(2.0**attempt, _MAX_BACKOFF_S)
         if retry_after:
@@ -79,6 +104,18 @@ class Http:
                 pass
         logger.info("%s: retrying in %.0fs (attempt %d)", self._label, delay, attempt)
         time.sleep(delay)
+
+
+def _read_bounded(response: httpx.Response, limit: int) -> bytes | None:
+    """Everything up to ``limit`` bytes, or None the moment it goes over."""
+    chunks: list[bytes] = []
+    total = 0
+    for chunk in response.iter_bytes():
+        total += len(chunk)
+        if total > limit:
+            return None
+        chunks.append(chunk)
+    return b"".join(chunks)
 
 
 def as_timestamp(value: str | None) -> int:

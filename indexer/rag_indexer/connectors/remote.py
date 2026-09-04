@@ -60,8 +60,13 @@ class RemoteSource(Protocol):
         """Everything the source currently holds. May raise; the caller handles it."""
         ...
 
-    def fetch(self, file: RemoteFile) -> bytes:
-        """One document's bytes. May raise; the caller handles it."""
+    def fetch(self, file: RemoteFile, limit: int) -> bytes | None:
+        """One document's bytes, or None if it is larger than ``limit``.
+
+        The limit is passed in rather than held by the connector so that there
+        is one number, owned by the loop that also checks the reported size.
+        May raise; the caller handles it.
+        """
         ...
 
     def close(self) -> None:
@@ -169,20 +174,20 @@ class _PollingSubject(ConnectorSubject):
             return True
 
         try:
-            payload = self._source.fetch(file)
+            payload = self._source.fetch(file, self._size_limit)
         except Exception:
             logger.exception(
                 "%s: could not read %r; retrying next pass", self._label, file.filename
             )
             return False
 
-        if len(payload) > self._size_limit:
-            # The listing under-reported, or did not report at all.
+        if payload is None:
+            # The listing under-reported, or did not report at all. The download
+            # stopped at the limit rather than finishing and being measured.
             logger.warning(
-                "%s: skipping %r, %d bytes is over the %d limit",
+                "%s: skipping %r, it is larger than the %d limit",
                 self._label,
                 file.filename,
-                len(payload),
                 self._size_limit,
             )
             return True

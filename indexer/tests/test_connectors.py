@@ -105,11 +105,12 @@ class _Service:
             raise ConnectionError("the service is down")
         return list(self.files)
 
-    def fetch(self, file: RemoteFile) -> bytes:
+    def fetch(self, file: RemoteFile, limit: int) -> bytes | None:
         self.fetched.append(file.external_id)
         if file.external_id in self.fail_on:
             raise ConnectionError("that one download failed")
-        return self.body
+        # What Http.download does: stop at the limit rather than return more.
+        return self.body if len(self.body) <= limit else None
 
     def close(self) -> None:
         pass
@@ -230,14 +231,15 @@ def test_an_oversized_file_is_skipped_from_the_listing():
     assert subject.added == []
 
 
-def test_a_file_the_listing_lied_about_is_skipped_after_download():
+def test_a_file_the_listing_lied_about_is_skipped_mid_download():
+    """The size in a listing is the service's word, not a fact."""
     service = _Service([_file(size=10)], body=b"x" * 5000)
     subject = _Subject(service, size_limit=1024)
 
     subject._poll({})
 
     assert service.fetched == ["f1"]
-    assert subject.added == [], "the real length is checked too"
+    assert subject.added == [], "the download stops at the limit rather than being measured after"
 
 
 def test_the_metadata_handed_to_pathway_is_ours():

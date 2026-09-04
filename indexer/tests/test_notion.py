@@ -130,7 +130,7 @@ def test_blocks_become_markdown_in_reading_order(source):
     )
     (file,) = connector.list()
 
-    assert connector.fetch(file).decode() == "\n".join(
+    assert connector.fetch(file, 1 << 20).decode() == "\n".join(
         [
             "# Заметка",
             "",
@@ -155,7 +155,7 @@ def test_nested_blocks_are_indented_not_lost(source):
     )
     (file,) = connector.list()
 
-    assert connector.fetch(file).decode().splitlines()[-2:] == ["Свернуто", "  Внутри"]
+    assert connector.fetch(file, 1 << 20).decode().splitlines()[-2:] == ["Свернуто", "  Внутри"]
 
 
 def test_a_table_row_keeps_its_cells(source):
@@ -173,7 +173,7 @@ def test_a_table_row_keeps_its_cells(source):
     )
     (file,) = connector.list()
 
-    assert "Мск | 12" in connector.fetch(file).decode()
+    assert "Мск | 12" in connector.fetch(file, 1 << 20).decode()
 
 
 def test_a_page_that_never_stops_nesting_stops_anyway(source):
@@ -183,7 +183,7 @@ def test_a_page_that_never_stops_nesting_stops_anyway(source):
     )
     api.children["b-loop"] = [_block("toggle", "loop", children=True)]
 
-    body = connector.fetch(_page_file(connector))
+    body = connector.fetch(_page_file(connector), 1 << 20)
 
     assert body.count(b"loop") <= 8, "the depth limit is what keeps one page finite"
 

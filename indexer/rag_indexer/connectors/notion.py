@@ -100,7 +100,7 @@ class NotionSource:
             )
         return files
 
-    def fetch(self, file: RemoteFile) -> bytes:
+    def fetch(self, file: RemoteFile, limit: int) -> bytes | None:
         budget = _Budget(_MAX_REQUESTS_PER_PAGE)
         lines = list(self._render(file.external_id, depth=0, budget=budget))
         # Negative, not zero: the counter only goes below zero when a request
@@ -109,7 +109,10 @@ class NotionSource:
             logger.warning("%s: %r is too large to read in full", self._label, file.filename)
         # The title is not a block, and it is often the only place the subject
         # of the page is named at all.
-        return "\n".join([f"# {file.filename.removesuffix('.md')}", "", *lines]).encode()
+        page = "\n".join([f"# {file.filename.removesuffix('.md')}", "", *lines]).encode()
+        # Bounded by the request budget rather than by bytes, so this is the
+        # backstop: a page of two hundred very long blocks is still a page.
+        return page if len(page) <= limit else None
 
     def _search(self) -> Iterator[dict[str, Any]]:
         cursor: str | None = None

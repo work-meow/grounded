@@ -5,6 +5,7 @@ shape of what it returns fails loudly instead of quietly producing empty chunks.
 """
 
 import io
+import zipfile
 
 import pytest
 from docx import Document
@@ -13,6 +14,7 @@ from openpyxl import Workbook
 from pptx import Presentation
 from pptx.util import Inches
 
+from rag_indexer import parsers
 from rag_indexer.parsers import parse_document
 
 
@@ -103,7 +105,24 @@ def test_unreadable_input_returns_nothing_instead_of_raising():
 
 def test_zip_that_is_not_an_office_document_is_ignored():
     buffer = io.BytesIO()
-    with __import__("zipfile").ZipFile(buffer, "w") as archive:
+    with zipfile.ZipFile(buffer, "w") as archive:
         archive.writestr("random.txt", "not office")
+
+    assert parse_document(buffer.getvalue()) == []
+
+
+def test_a_zip_bomb_is_refused_before_anything_is_unpacked(monkeypatch):
+    """A file that claims to unpack to more than the cap is never opened.
+
+    The indexer runs under a memory limit and holds the index in RAM: being
+    OOM-killed by one crafted upload would cost a full rebuild. The cap is
+    lowered here rather than building a real multi-gigabyte archive — what is
+    under test is the refusal, not zlib.
+    """
+    monkeypatch.setattr(parsers, "_MAX_UNCOMPRESSED_BYTES", 64)
+
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("word/document.xml", b"\0" * 4096)
 
     assert parse_document(buffer.getvalue()) == []

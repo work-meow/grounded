@@ -55,5 +55,7 @@ def tenant_metadata(text: str, metadata: dict) -> tuple[str, dict]:
     """
     parsed = parse_key(str(metadata.get("path", "")))
     if parsed is None:
-        return text, {**metadata, "user_id": None, "document_id": None}
+        # Every id explicitly nulled, so an object outside our layout has the
+        # same metadata shape as one inside it and satisfies no filter.
+        return text, {**metadata, **dict.fromkeys(_KEY_RE.groupindex)}
     return text, {**metadata, **parsed}

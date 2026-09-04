@@ -28,6 +28,12 @@ import pypdfium2 as pdfium
 _PDF_MAGIC = b"%PDF-"
 _ZIP_MAGIC = b"PK\x03\x04"
 
+# An OOXML file is a ZIP, and a ZIP can claim to hold far more than it does.
+# The indexer runs under a memory limit; being killed by one crafted upload
+# would take the whole in-memory index down and force a full rebuild. Uploads
+# are capped at 64 MB, so a hundredfold expansion is already generous.
+_MAX_UNCOMPRESSED_BYTES = 6 * 1024 * 1024 * 1024
+
 logger = logging.getLogger(__name__)
 
 
@@ -59,13 +65,16 @@ def _pdf(contents: bytes) -> list[tuple[str, dict]]:
     document = pdfium.PdfDocument(contents)
     try:
         for number, page in enumerate(document, start=1):
-            textpage = page.get_textpage()
+            # Every one of these wraps a C++ handle. Closing them explicitly,
+            # and on the failure path too, is what keeps a malformed page from
+            # holding native memory for as long as the GC feels like.
             try:
-                text = textpage.get_text_bounded()
+                textpage = page.get_textpage()
+                try:
+                    text = textpage.get_text_bounded()
+                finally:
+                    textpage.close()
             finally:
-                # These wrap C++ handles; letting the GC decide would hold
-                # native memory for as long as it feels like.
-                textpage.close()
                 page.close()
             if text.strip():
                 pages.append((text, {"page_number": number}))
@@ -77,6 +86,10 @@ def _pdf(contents: bytes) -> list[tuple[str, dict]]:
 def _ooxml(contents: bytes) -> list[tuple[str, dict]]:
     """DOCX, PPTX and XLSX are all ZIPs; the part names tell them apart."""
     with zipfile.ZipFile(io.BytesIO(contents)) as archive:
+        declared = sum(entry.file_size for entry in archive.infolist())
+        if declared > _MAX_UNCOMPRESSED_BYTES:
+            logger.warning("refusing a zip that unpacks to %d bytes", declared)
+            return []
         names = set(archive.namelist())
 
     if "word/document.xml" in names:
@@ -149,11 +162,17 @@ def _xlsx(contents: bytes) -> list[tuple[str, dict]]:
 
 
 def _plain_text(contents: bytes) -> list[tuple[str, dict]]:
-    """TXT and Markdown. Latin-1 never fails, so it is the last resort."""
-    for encoding in ("utf-8", "utf-16", "cp1251", "latin-1"):
+    """TXT and Markdown, decoded by trying the encodings we actually receive."""
+    text = ""
+    for encoding in ("utf-8", "utf-16", "cp1251"):
         try:
             text = contents.decode(encoding)
             break
         except UnicodeDecodeError:
             continue
+    else:
+        # latin-1 maps every byte to a code point, so it cannot raise. Spelling
+        # the fallback out here rather than as the last loop entry keeps `text`
+        # bound on every path, which the loop form only guaranteed by accident.
+        text = contents.decode("latin-1")
     return [(text, {})] if text.strip() else []

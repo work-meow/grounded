@@ -29,6 +29,8 @@ from rag_shared.doc_key import PREFIX, tenant_metadata
 from rag_indexer.config import IndexerSettings
 from rag_indexer.parsers import parse_document
 
+logger = logging.getLogger(__name__)
+
 
 class _DropPollingNoise(logging.Filter):
     """Pathway's S3 connector reports every poll at INFO, roughly twice a second.
@@ -127,7 +129,7 @@ def main() -> None:
     # first upload.
     store = build_store(settings)
     server = DocumentStoreServer(settings.host, settings.port, store)
-    logging.info("indexer listening on http://%s:%s", settings.host, settings.port)
+    logger.info("indexer listening on http://%s:%s", settings.host, settings.port)
     server.run(
         with_cache=True,
         cache_backend=pw.persistence.Backend.filesystem(settings.cache_dir),

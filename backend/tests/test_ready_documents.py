@@ -107,6 +107,19 @@ async def test_metadata_that_makes_no_sense_is_dropped_not_fatal(pathway):
     assert document.web_url is None
 
 
+# 36 characters of hex and dashes, and not a UUID: the key layout matches it,
+# uuid.UUID does not.
+IMPOSSIBLE = {
+    "path": f"users/{ALICE}/sources/{uuid4()}/{'-' * 36}/x.pdf",
+    "_indexing_status": "INDEXED",
+}
+
+
+@pytest.mark.parametrize("pathway", [[IMPOSSIBLE]], indirect=True)
+async def test_one_impossible_object_does_not_take_out_the_file_list(pathway):
+    assert await documents_of(ALICE) == {}
+
+
 @pytest.mark.parametrize("pathway", [[]], indirect=True)
 async def test_an_empty_index_lists_nothing(pathway):
     assert await documents_of(ALICE) == {}

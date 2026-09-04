@@ -88,6 +88,14 @@ def _as_int(value: Any) -> int | None:
         return None
 
 
+def _is_uuid(value: str) -> bool:
+    try:
+        UUID(value)
+    except ValueError:
+        return False
+    return True
+
+
 @dataclass(frozen=True, slots=True)
 class IndexedDocument:
     """One document as the index knows it.
@@ -175,6 +183,12 @@ async def indexed_documents(settings: Settings, user_id: UUID) -> list[IndexedDo
         if not path.startswith(prefix):
             continue
         if (parsed := parse_key(path)) is None:
+            continue
+        # The key layout matches hex and dashes, which is nearly but not quite
+        # "a UUID". Anything else is not a document this system created, and the
+        # caller turns these into UUIDs — where one bad object in the bucket
+        # would otherwise take out the whole file list.
+        if not _is_uuid(parsed["document_id"]) or not _is_uuid(parsed["source_id"]):
             continue
         documents.append(
             IndexedDocument(

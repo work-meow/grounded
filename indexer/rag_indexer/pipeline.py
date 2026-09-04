@@ -41,16 +41,24 @@ from rag_indexer.parsers import parse_document
 logger = logging.getLogger(__name__)
 
 
-class _DropPollingNoise(logging.Filter):
-    """Pathway's S3 connector reports every poll at INFO, roughly twice a second.
+#: Lines Pathway emits on every engine tick. They say the same thing whether or
+#: not anything changed, and there are now ten ticks a second (see
+#: COMMIT_INTERVAL_MS), so together they produce about a thousand lines a minute
+#: — roughly a hundred megabytes a day into a log capped at thirty, which would
+#: leave a few hours of history and bury every event worth reading.
+_TICK_NOISE = ("pending download tasks", "Persisting a chunk of")
 
-    It says the same thing whether or not anything changed, so it buries the
-    events that matter. Attached to the handler rather than the logger: a
-    filter on a logger is not applied to records that propagate up to it.
+
+class _DropPollingNoise(logging.Filter):
+    """Drop the per-tick chatter, keep everything else.
+
+    Attached to the handler rather than the logger: a filter on a logger is not
+    applied to records that propagate up to it from Pathway's own loggers.
     """
 
     def filter(self, record: logging.LogRecord) -> bool:
-        return "pending download tasks" not in record.getMessage()
+        message = record.getMessage()
+        return not any(noise in message for noise in _TICK_NOISE)
 
 
 def configure_logging(level: str) -> None:

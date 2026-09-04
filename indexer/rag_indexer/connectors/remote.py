@@ -29,7 +29,7 @@ from pathway.io.python import ConnectorSubject
 from rag_shared.connectors import ConnectorSpec
 from rag_shared.formats import is_supported
 
-from rag_indexer.connectors.contract import clean_name, describe
+from rag_indexer.connectors.contract import COMMIT_INTERVAL_MS, clean_name, describe
 
 logger = logging.getLogger(__name__)
 
@@ -262,5 +262,6 @@ def polling_table(
         # gdrive and pyfilesystem connectors call it exactly like this, and emit
         # the same warning at graph build; one line per connector, at startup.
         format="binary",
+        autocommit_duration_ms=COMMIT_INTERVAL_MS,
         name=f"{spec.kind.value}-{spec.source_id}",
     )

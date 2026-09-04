@@ -71,16 +71,16 @@ async def _indexed(settings: Settings, user_id: uuid.UUID) -> dict[str, retrieve
     Documents from connected sources disappear from the list entirely, because
     the index is the only record of them; that is honest rather than convenient.
 
-    This call costs about 1.5 s after any pause, and about 15 ms if another one
-    just preceded it — measured on the deployment box, and stable across runs.
-    Pathway answers /v1/inputs from a snapshot it refreshes on a cycle, so a
-    request that arrives mid-cycle waits for the next one. The list page is
-    therefore slow to first paint and cheap to poll.
+    About 85 ms, measured on the deployment box. It used to be a flat 1.48 s:
+    Pathway answers a query only once its dataflow has advanced past it, and the
+    frontier advances no faster than the slowest committing input connector,
+    which defaulted to a tick every 1500 ms. The indexer now commits every
+    100 ms (see COMMIT_INTERVAL_MS there), and this call stopped being something
+    to design around.
 
-    That is deliberately not cached here. Readiness has exactly one home — the
-    indexer — and a cache would make the UI able to claim a document is
-    searchable while the process that answers searches disagrees. A skeleton for
-    a second and a half is the cheaper of the two failures.
+    It is not cached here, and would not be even if it were slow. Readiness has
+    exactly one home — the indexer — and a cache would let this API claim a
+    document is searchable while the process that answers searches disagrees.
     """
     try:
         found = await retriever.indexed_documents(settings, user_id)

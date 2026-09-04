@@ -13,6 +13,7 @@ import pathway as pw
 from rag_shared.doc_key import PREFIX
 
 from rag_indexer.config import IndexerSettings
+from rag_indexer.connectors.contract import COMMIT_INTERVAL_MS
 
 
 def build(settings: IndexerSettings) -> pw.Table:
@@ -23,6 +24,7 @@ def build(settings: IndexerSettings) -> pw.Table:
         format="binary",
         mode="streaming",
         with_metadata=True,
+        autocommit_duration_ms=COMMIT_INTERVAL_MS,
         aws_s3_settings=pw.io.s3.AwsS3Settings(
             bucket_name=settings.s3_bucket,
             access_key=settings.s3_access_key_id,

@@ -18,7 +18,7 @@ import pathway as pw
 from rag_shared.connectors import ConnectorSpec
 from rag_shared.formats import is_supported
 
-from rag_indexer.connectors.contract import conform, describe
+from rag_indexer.connectors.contract import COMMIT_INTERVAL_MS, conform, describe
 from rag_indexer.connectors.http import as_timestamp
 
 logger = logging.getLogger(__name__)
@@ -51,6 +51,8 @@ def build(
         # dropped in the folder costs one listing entry rather than its size.
         object_size_limit=size_limit,
         name=f"gdrive-{spec.source_id}",
+        # Forwarded by pw.io.gdrive.read to the python connector underneath.
+        autocommit_duration_ms=COMMIT_INTERVAL_MS,
     )
 
     @pw.udf

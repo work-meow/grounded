@@ -71,9 +71,13 @@ def watch(settings: IndexerSettings, etag: str) -> None:
 
 
 def _watch(settings: IndexerSettings, etag: str) -> None:
+    # One client for the life of the thread. Building a botocore client parses
+    # the service model from JSON, which is far more work than the HEAD it is
+    # for, and this runs every thirty seconds forever.
+    client = _client(settings)
     while True:
         time.sleep(settings.manifest_poll_s)
-        current = _etag(settings)
+        current = _etag(client, settings)
         if current is None or current == etag:
             continue
         logger.warning("the connected sources changed; restarting to rebuild the index")
@@ -115,14 +119,14 @@ def _fetch(settings: IndexerSettings) -> tuple[bytes | None, str]:
         return None, ""
 
 
-def _etag(settings: IndexerSettings) -> str | None:
+def _etag(client, settings: IndexerSettings) -> str | None:
     """The manifest's ETag, "" if there is none, or None if we could not ask.
 
     The distinction matters: MinIO being briefly unreachable must not read as
     "the manifest was deleted" and restart the process.
     """
     try:
-        head = _client(settings).head_object(Bucket=settings.s3_bucket, Key=MANIFEST_KEY)
+        head = client.head_object(Bucket=settings.s3_bucket, Key=MANIFEST_KEY)
         return str(head.get("ETag", ""))
     except ClientError as exc:
         if exc.response.get("Error", {}).get("Code") in ("NoSuchKey", "404", "NoSuchBucket"):

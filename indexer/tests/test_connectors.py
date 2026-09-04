@@ -293,3 +293,60 @@ def test_a_polled_source_produces_rows_pathway_can_read():
     assert tagged["user_id"] == str(USER)
     assert tagged["source_id"] == str(SOURCE)
     assert tagged["filename"] == "Договор.md"
+
+
+def test_every_kind_builds_and_the_tables_concatenate():
+    """DocumentStore concatenates its inputs, which requires one schema.
+
+    Each connector reaches its service differently and produces its metadata
+    differently, so "they all still line up" is a claim that has to be checked
+    rather than assumed — and a mismatch would only appear at startup, in
+    production, as an index that refuses to build at all.
+    """
+    import json
+
+    import pathway as pw
+
+    from rag_indexer.config import IndexerSettings
+    from rag_indexer.connectors import build_tables
+
+    configs = {
+        Kind.GDRIVE: {"folder_id": "1AbCdEf"},
+        Kind.NOTION: {"token": "x"},
+        Kind.YANDEX: {"token": "y", "path": "/Docs"},
+        Kind.DROPBOX: {"app_key": "a", "app_secret": "b", "refresh_token": "c", "path": "/D"},
+        Kind.ONEDRIVE: {"client_id": "a", "client_secret": "b", "refresh_token": "c", "path": "D"},
+    }
+    specs = [
+        ConnectorSpec(source_id=uuid.uuid4(), user_id=USER, kind=kind, name=kind.value, config=c)
+        for kind, c in configs.items()
+    ]
+    settings = IndexerSettings(
+        openrouter_api_key="unused",
+        gdrive_credentials_json=json.dumps({"type": "service_account"}),
+    )
+
+    tables = build_tables(settings, specs)
+
+    # One per connected source, plus the uploads table that is always there.
+    assert len(tables) == len(configs) + 1
+    merged = pw.Table.concat_reindex(*(t.select(pw.this.data, pw.this._metadata) for t in tables))
+    assert sorted(merged.column_names()) == ["_metadata", "data"]
+
+
+def test_a_source_that_cannot_be_built_costs_only_itself():
+    """One user's misconfiguration must not take the index down for everyone."""
+    from rag_indexer.config import IndexerSettings
+    from rag_indexer.connectors import build_tables
+
+    broken = ConnectorSpec(
+        source_id=uuid.uuid4(),
+        user_id=USER,
+        kind=Kind.GDRIVE,
+        name="no credentials on this deployment",
+        config={"folder_id": "1AbCdEf"},
+    )
+
+    tables = build_tables(IndexerSettings(openrouter_api_key="unused"), [broken])
+
+    assert len(tables) == 1, "the uploads table survives a Drive source that cannot be built"

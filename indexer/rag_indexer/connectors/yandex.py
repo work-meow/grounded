@@ -9,14 +9,14 @@ Folders are walked breadth-first with the same bounds as OneDrive, and for the
 same reason.
 """
 
-from collections.abc import Iterable, Iterator
+from collections.abc import Iterator
 from typing import Any
 from urllib.parse import quote
 
 from rag_shared.connectors import ConnectorSpec
 
 from rag_indexer.connectors.http import Http, as_timestamp
-from rag_indexer.connectors.remote import RemoteFile, folder_path
+from rag_indexer.connectors.remote import Listing, RemoteFile, folder_path
 
 _API = "https://cloud-api.yandex.net/v1/disk"
 _PAGE_SIZE = 200
@@ -43,18 +43,23 @@ class YandexSource:
         self._http.close()
         self._downloads.close()
 
-    def list(self) -> Iterable[RemoteFile]:
+    def contents(self) -> Listing:
         files: list[RemoteFile] = []
         queue = [self._path]
+        complete = True
         visited = 0
-        while queue and visited < _MAX_FOLDERS:
+        while queue:
+            if visited >= _MAX_FOLDERS:
+                complete = False
+                break
             visited += 1
-            for item in self._items(queue.pop(0)):
+            for item, whole_folder in self._items(queue.pop(0)):
+                complete = complete and whole_folder
                 if item.get("type") == "dir":
                     queue.append(item["path"])
                 elif item.get("type") == "file":
                     files.append(_as_file(item))
-        return files
+        return Listing(files=files, complete=complete)
 
     def fetch(self, file: RemoteFile, limit: int) -> bytes | None:
         # The href is signed and expires in minutes, so it is fetched per
@@ -64,7 +69,8 @@ class YandexSource:
         )["href"]
         return self._downloads.download("GET", href, limit=limit)
 
-    def _items(self, path: str) -> Iterator[dict[str, Any]]:
+    def _items(self, path: str) -> Iterator[tuple[dict[str, Any], bool]]:
+        """One folder's items, each paired with whether the folder was read whole."""
         for page in range(_MAX_PAGES_PER_FOLDER):
             payload = self._http.json(
                 "GET",
@@ -72,9 +78,11 @@ class YandexSource:
                 params={"path": path, "limit": _PAGE_SIZE, "offset": page * _PAGE_SIZE},
             )
             items = (payload.get("_embedded") or {}).get("items") or []
-            yield from items
+            for item in items:
+                yield item, True
             if len(items) < _PAGE_SIZE:
                 return
+        yield {}, False
 
 
 def _as_file(item: dict[str, Any]) -> RemoteFile:

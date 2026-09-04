@@ -10,14 +10,13 @@ resolving.
 """
 
 import json
-from collections.abc import Iterable, Iterator
 from typing import Any
 from urllib.parse import quote
 
 from rag_shared.connectors import ConnectorSpec
 
 from rag_indexer.connectors.http import Http, OAuthToken, as_timestamp
-from rag_indexer.connectors.remote import RemoteFile, folder_path
+from rag_indexer.connectors.remote import Listing, RemoteFile, folder_path
 
 _TOKEN_URL = "https://api.dropbox.com/oauth2/token"
 _API = "https://api.dropboxapi.com/2"
@@ -45,8 +44,12 @@ class DropboxSource:
         self._http.close()
         self._token.close()
 
-    def list(self) -> Iterable[RemoteFile]:
-        return [_as_file(entry) for entry in self._entries() if entry.get(".tag") == "file"]
+    def contents(self) -> Listing:
+        entries, complete = self._entries()
+        return Listing(
+            files=[_as_file(entry) for entry in entries if entry.get(".tag") == "file"],
+            complete=complete,
+        )
 
     def fetch(self, file: RemoteFile, limit: int) -> bytes | None:
         self._authorize()
@@ -60,20 +63,22 @@ class DropboxSource:
             headers={"Dropbox-API-Arg": json.dumps({"path": file.external_id}, ensure_ascii=True)},
         )
 
-    def _entries(self) -> Iterator[dict[str, Any]]:
+    def _entries(self) -> tuple[list[dict[str, Any]], bool]:
         self._authorize()
         payload = self._http.json(
             "POST",
             f"{_API}/files/list_folder",
             json={"path": self._path, "recursive": True, "limit": _PAGE_SIZE},
         )
+        entries: list[dict[str, Any]] = []
         for _ in range(_MAX_PAGES):
-            yield from payload.get("entries", [])
+            entries.extend(payload.get("entries", []))
             if not payload.get("has_more"):
-                return
+                return entries, True
             payload = self._http.json(
                 "POST", f"{_API}/files/list_folder/continue", json={"cursor": payload["cursor"]}
             )
+        return entries, False
 
     def _authorize(self) -> None:
         self._http.set_header("Authorization", self._token.header())

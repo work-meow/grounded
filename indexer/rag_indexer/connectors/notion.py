@@ -11,14 +11,14 @@ pull in more than was offered. ``/search`` returns exactly that set.
 """
 
 import logging
-from collections.abc import Iterable, Iterator
+from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import Any
 
 from rag_shared.connectors import ConnectorSpec
 
 from rag_indexer.connectors.http import Http, as_timestamp
-from rag_indexer.connectors.remote import RemoteFile
+from rag_indexer.connectors.remote import Listing, RemoteFile
 
 logger = logging.getLogger(__name__)
 
@@ -77,7 +77,10 @@ class NotionSource:
     def close(self) -> None:
         self._http.close()
 
-    def list(self) -> Iterable[RemoteFile]:
+    def contents(self) -> Listing:
+        # Always complete: /search is followed to the end of its cursor, with no
+        # bound of ours in the way. The budget in fetch() bounds one page's
+        # content, which is a different thing entirely.
         files = []
         for page in self._search():
             # Archived pages are in the bin, not deleted; treating them as gone
@@ -98,7 +101,7 @@ class NotionSource:
                     web_url=page.get("url"),
                 )
             )
-        return files
+        return Listing(files=files)
 
     def fetch(self, file: RemoteFile, limit: int) -> bytes | None:
         budget = _Budget(_MAX_REQUESTS_PER_PAGE)

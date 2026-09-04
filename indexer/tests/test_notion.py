@@ -79,7 +79,7 @@ def _page(page_id=PAGE, *, title="Заметка", **extra):
 def test_a_page_is_listed_as_a_markdown_document(source):
     connector, _ = source([_page()], {})
 
-    (file,) = connector.list()
+    (file,) = connector.contents().files
 
     assert file.external_id == PAGE
     # The suffix is load-bearing: it is what tells the parser to read the bytes
@@ -92,13 +92,13 @@ def test_a_page_is_listed_as_a_markdown_document(source):
 def test_a_page_in_the_bin_is_gone(source):
     connector, _ = source([_page(in_trash=True), _page("other", title="Живая")], {})
 
-    assert [file.filename for file in connector.list()] == ["Живая.md"]
+    assert [file.filename for file in connector.contents().files] == ["Живая.md"]
 
 
 def test_a_page_without_a_title_still_has_a_name(source):
     connector, _ = source([_page(properties={})], {})
 
-    (file,) = connector.list()
+    (file,) = connector.contents().files
     assert file.filename == "Без названия.md"
 
 
@@ -108,7 +108,7 @@ def test_a_database_row_titled_by_a_renamed_property(source):
         [_page(properties={"Тема": {"type": "title", "title": _rich("Строка")}})], {}
     )
 
-    (file,) = connector.list()
+    (file,) = connector.contents().files
     assert file.filename == "Строка.md"
 
 
@@ -128,7 +128,7 @@ def test_blocks_become_markdown_in_reading_order(source):
             ]
         },
     )
-    (file,) = connector.list()
+    (file,) = connector.contents().files
 
     assert connector.fetch(file, 1 << 20).decode() == "\n".join(
         [
@@ -153,7 +153,7 @@ def test_nested_blocks_are_indented_not_lost(source):
             "b-Свернуто": [_block("paragraph", "Внутри")],
         },
     )
-    (file,) = connector.list()
+    (file,) = connector.contents().files
 
     assert connector.fetch(file, 1 << 20).decode().splitlines()[-2:] == ["Свернуто", "  Внутри"]
 
@@ -171,7 +171,7 @@ def test_a_table_row_keeps_its_cells(source):
             ]
         },
     )
-    (file,) = connector.list()
+    (file,) = connector.contents().files
 
     assert "Мск | 12" in connector.fetch(file, 1 << 20).decode()
 
@@ -189,7 +189,7 @@ def test_a_page_that_never_stops_nesting_stops_anyway(source):
 
 
 def _page_file(connector):
-    (file,) = connector.list()
+    (file,) = connector.contents().files
     return file
 
 
@@ -197,5 +197,5 @@ def test_a_slash_in_a_title_is_not_a_folder(source):
     """The name becomes part of a key, where a slash is a separator."""
     connector, _ = source([_page(title="Продажи/2026")], {})
 
-    (file,) = connector.list()
+    (file,) = connector.contents().files
     assert file.filename == "Продажи-2026.md"

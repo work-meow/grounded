@@ -19,7 +19,6 @@ keeps the previous snapshot; a failed download retries on the next pass.
 import json
 import logging
 import time
-from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Literal, Protocol
 
@@ -53,11 +52,29 @@ class RemoteFile:
     size: int | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class Listing:
+    """What a source holds, and whether that is all of it."""
+
+    files: list[RemoteFile]
+    #: False when a bound was reached before the end of the source. Every
+    #: connector walks a tree of unknown shape and every walk is bounded, so
+    #: this is not hypothetical — and the loop below has to know, because an
+    #: incomplete listing is indistinguishable from a great many deletions.
+    complete: bool = True
+
+
 class RemoteSource(Protocol):
     """What a connector has to be able to do."""
 
-    def list(self) -> Iterable[RemoteFile]:
-        """Everything the source currently holds. May raise; the caller handles it."""
+    def contents(self) -> Listing:
+        """Everything the source currently holds. May raise; the caller handles it.
+
+        Not called ``list``: inside a class body that defines it, ``list`` is
+        the method rather than the builtin, so every ``list[...]`` annotation in
+        a sibling signature stops being a type. That is a confusing failure at
+        import time, and it happened twice before this name changed.
+        """
         ...
 
     def fetch(self, file: RemoteFile, limit: int) -> bytes | None:
@@ -135,16 +152,27 @@ class _PollingSubject(ConnectorSubject):
 
     def _poll(self, indexed: dict[str, int]) -> None:
         try:
-            listing = {file.external_id: file for file in self._source.list()}
+            listing = self._source.contents()
         except Exception:
             logger.exception("%s: could not be listed; keeping the last snapshot", self._label)
             return
 
-        for external_id in indexed.keys() - listing.keys():
-            self._remove(api.ref_scalar(external_id), b"")
-            del indexed[external_id]
+        found = {file.external_id: file for file in listing.files}
+        if listing.complete:
+            for external_id in indexed.keys() - found.keys():
+                self._remove(api.ref_scalar(external_id), b"")
+                del indexed[external_id]
+        else:
+            # Nothing is removed on a partial listing. Everything past the bound
+            # is missing from it, would read as deleted, and would come straight
+            # back on the next pass — documents flickering out of search, and a
+            # re-embedding bill, every ten minutes.
+            logger.warning(
+                "%s: the listing hit a bound before the end; nothing removed this pass",
+                self._label,
+            )
 
-        for file in listing.values():
+        for file in found.values():
             if indexed.get(file.external_id) == file.modified_at:
                 continue
             if self._store(file):

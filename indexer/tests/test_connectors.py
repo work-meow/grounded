@@ -15,7 +15,7 @@ from rag_shared.connectors import ConnectorSpec, Kind
 from rag_shared.doc_key import document_id_for, parse_key
 
 from rag_indexer.connectors.contract import FALLBACK_NAME, clean_name, describe
-from rag_indexer.connectors.remote import RemoteFile, _PollingSubject
+from rag_indexer.connectors.remote import Listing, RemoteFile, _PollingSubject
 
 USER = uuid.UUID("11111111-1111-1111-1111-111111111111")
 SOURCE = uuid.UUID("22222222-2222-2222-2222-222222222222")
@@ -99,11 +99,12 @@ class _Service:
         self.fetched: list[str] = []
         self.fail_on: set[str] = set()
         self.listing_fails = False
+        self.listing_truncated = False
 
-    def list(self):
+    def contents(self) -> Listing:
         if self.listing_fails:
             raise ConnectionError("the service is down")
-        return list(self.files)
+        return Listing(files=list(self.files), complete=not self.listing_truncated)
 
     def fetch(self, file: RemoteFile, limit: int) -> bytes | None:
         self.fetched.append(file.external_id)
@@ -178,6 +179,27 @@ def test_a_deleted_file_leaves_the_index():
 
     assert len(subject.removed) == 1
     assert set(seen) == {"f1"}
+
+
+def test_a_listing_cut_short_removes_nothing():
+    """Everything past the bound is missing from the listing, not deleted.
+
+    Every connector walks a tree of unknown shape under a bound. Treating a
+    truncated listing as deletions would drop the tail of a large source out of
+    search and pull it back on the next pass — for ever, at the price of
+    re-embedding it each time.
+    """
+    service = _Service([_file("f1"), _file("f2")])
+    subject = _Subject(service)
+    seen: dict[str, int] = {}
+    subject._poll(seen)
+
+    service.files = [_file("f1")]
+    service.listing_truncated = True
+    subject._poll(seen)
+
+    assert subject.removed == []
+    assert set(seen) == {"f1", "f2"}, "the one past the bound is still considered indexed"
 
 
 def test_a_service_that_is_down_changes_nothing():

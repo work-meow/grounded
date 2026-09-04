@@ -10,13 +10,13 @@ header must not follow it there, and httpx drops it on a cross-origin redirect,
 which is the behaviour this relies on.
 """
 
-from collections.abc import Iterable, Iterator
+from collections.abc import Iterator
 from typing import Any
 
 from rag_shared.connectors import ConnectorSpec
 
 from rag_indexer.connectors.http import Http, OAuthToken, as_timestamp
-from rag_indexer.connectors.remote import RemoteFile, folder_path
+from rag_indexer.connectors.remote import Listing, RemoteFile, folder_path
 
 _TOKEN_URL = "https://login.microsoftonline.com/common/oauth2/v2.0/token"
 _GRAPH = "https://graph.microsoft.com/v1.0"
@@ -48,19 +48,24 @@ class OneDriveSource:
         self._http.close()
         self._token.close()
 
-    def list(self) -> Iterable[RemoteFile]:
+    def contents(self) -> Listing:
         self._authorize()
         files: list[RemoteFile] = []
         queue = [self._root_url()]
+        complete = True
         visited = 0
-        while queue and visited < _MAX_FOLDERS:
+        while queue:
+            if visited >= _MAX_FOLDERS:
+                complete = False
+                break
             visited += 1
-            for item in self._children(queue.pop(0)):
+            for item, whole_folder in self._children(queue.pop(0)):
+                complete = complete and whole_folder
                 if "folder" in item:
                     queue.append(f"{_GRAPH}/me/drive/items/{item['id']}/children")
                 elif "file" in item:
                     files.append(_as_file(item))
-        return files
+        return Listing(files=files, complete=complete)
 
     def fetch(self, file: RemoteFile, limit: int) -> bytes | None:
         self._authorize()
@@ -75,13 +80,18 @@ class OneDriveSource:
         # needs no escaping of its own separators.
         return f"{_GRAPH}/me/drive/root:/{self._path}:/children"
 
-    def _children(self, url: str | None) -> Iterator[dict[str, Any]]:
+    def _children(self, url: str | None) -> Iterator[tuple[dict[str, Any], bool]]:
+        """One folder's items, each paired with whether the folder was read whole."""
         params: dict[str, Any] | None = {"$top": _PAGE_SIZE}
-        for _ in range(_MAX_PAGES_PER_FOLDER):
+        for page in range(_MAX_PAGES_PER_FOLDER + 1):
             if not url:
                 return
+            if page == _MAX_PAGES_PER_FOLDER:
+                yield {}, False
+                return
             payload = self._http.json("GET", url, params=params)
-            yield from payload.get("value", [])
+            for item in payload.get("value", []):
+                yield item, True
             # The continuation link already carries the paging parameters.
             url, params = payload.get("@odata.nextLink"), None
 

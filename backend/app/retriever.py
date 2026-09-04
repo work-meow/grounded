@@ -32,13 +32,20 @@ def _http() -> httpx.AsyncClient:
 def _tenant_filter(user_id: UUID, document_id: UUID | None = None) -> str:
     """A JMESPath filter pinned to one user.
 
+    Backticks, not quotes. Pathway rewrites the expression before handing it to
+    the engine (see document_store._get_jmespath_filter): a backtick becomes a
+    single quote, a single quote is escaped to \\' and a double quote is
+    dropped. Written with quotes, `user_id == 'x'` reaches the parser as
+    `user_id == \\'x\\'` — which does not parse, and takes the whole indexer
+    process down with it rather than returning an error.
+
     Both ids are ``UUID`` instances, so their string form is hex-and-dashes
-    only and cannot break out of the quotes. That typing *is* the injection
-    guard — do not loosen it to ``str``.
+    only and carries no character that rewrite could turn into syntax. That
+    typing *is* the injection guard — do not loosen it to ``str``.
     """
-    clause = f"user_id == '{user_id}'"
+    clause = f"user_id == `{user_id}`"
     if document_id is not None:
-        clause += f" && document_id == '{document_id}'"
+        clause += f" && document_id == `{document_id}`"
     return clause
 
 

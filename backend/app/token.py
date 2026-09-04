@@ -18,6 +18,16 @@ from app.security import issue_token
 
 
 async def _run(email: str | None, user_id: UUID | None, days: int) -> str:
+    try:
+        return await _issue(email, user_id, days)
+    finally:
+        # Inside this loop, not after it: asyncpg's connections belong to the
+        # loop that opened them, and disposing from a second asyncio.run()
+        # fails with "Event loop is closed".
+        await engine.dispose()
+
+
+async def _issue(email: str | None, user_id: UUID | None, days: int) -> str:
     settings = get_settings()
     async with Session() as session:
         user = None
@@ -50,10 +60,7 @@ def main() -> None:
     parser.add_argument("--days", type=int, default=30, help="token lifetime (default: 30)")
     args = parser.parse_args()
 
-    try:
-        asyncio.run(_run(args.email, args.user_id, args.days))
-    finally:
-        asyncio.run(engine.dispose())
+    asyncio.run(_run(args.email, args.user_id, args.days))
 
 
 if __name__ == "__main__":

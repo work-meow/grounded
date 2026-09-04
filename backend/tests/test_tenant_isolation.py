@@ -23,8 +23,26 @@ def chunk_metadata(user_id: UUID, filename: str = "contract.pdf") -> dict:
     return tenant_metadata("text", {"path": key, "page_number": 14})[1]
 
 
+def as_pathway_rewrites_it(expression: str) -> str:
+    """Reproduce document_store._get_jmespath_filter verbatim.
+
+    Pathway does not pass the filter through untouched, and evaluating the raw
+    string here would test a dialect the engine never sees — which is exactly
+    how a filter that crashed the indexer once passed these tests.
+    """
+    return expression.replace("'", r"\'").replace("`", "'").replace('"', "")
+
+
 def matches(user_id: UUID, metadata: dict, document_id: UUID | None = None) -> bool:
-    return bool(jmespath.compile(_tenant_filter(user_id, document_id)).search(metadata))
+    expression = as_pathway_rewrites_it(_tenant_filter(user_id, document_id))
+    return bool(jmespath.compile(expression).search(metadata))
+
+
+def test_filter_uses_backticks_so_pathway_rewrites_it_into_valid_syntax():
+    """Quotes would arrive at the engine as \\' and take the process down."""
+    raw = _tenant_filter(ALICE)
+    assert "`" in raw and "'" not in raw
+    assert "\\" not in as_pathway_rewrites_it(raw)
 
 
 def test_user_matches_own_chunk():

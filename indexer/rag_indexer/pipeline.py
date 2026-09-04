@@ -23,7 +23,7 @@ from pathway.stdlib.indexing import (
 from pathway.xpacks.llm.document_store import DocumentStore
 from pathway.xpacks.llm.embedders import OpenAIEmbedder
 from pathway.xpacks.llm.servers import DocumentStoreServer
-from pathway.xpacks.llm.splitters import TokenCountSplitter
+from pathway.xpacks.llm.splitters import RecursiveSplitter
 from rag_shared.doc_key import PREFIX, tenant_metadata
 
 from rag_indexer.config import IndexerSettings
@@ -105,9 +105,14 @@ def build_store(settings: IndexerSettings) -> DocumentStore:
         docs=files,
         retriever_factory=retriever_factory,
         parser=pw.udf(parse_document),
-        splitter=TokenCountSplitter(
-            min_tokens=settings.chunk_min_tokens,
-            max_tokens=settings.chunk_max_tokens,
+        # Recursive, not TokenCount: it splits on paragraph and sentence
+        # boundaries before falling back to raw length, so a heading is not
+        # welded onto the body of the section below it. Measured against
+        # TokenCountSplitter, which merged both and left no overlap.
+        splitter=RecursiveSplitter(
+            chunk_size=settings.chunk_size,
+            chunk_overlap=settings.chunk_overlap,
+            encoding_name="cl100k_base",
         ),
         doc_post_processors=[tenant_metadata],
     )

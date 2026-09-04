@@ -19,10 +19,13 @@ class IndexerSettings(BaseSettings):
     embedding_model: str = "openai/text-embedding-3-small"
 
     # --- chunking -------------------------------------------------------------
-    # 500 tokens keeps every chunk far below the embedder's 8k limit, so no
-    # truncation logic is ever needed.
-    chunk_min_tokens: int = 100
-    chunk_max_tokens: int = 500
+    # Tokens, not characters (the splitter is given a tiktoken encoding). 500
+    # keeps every chunk far below the embedder's 8k limit, so the truncation
+    # path is never reached.
+    chunk_size: int = 500
+    # Overlap carries a sentence across the seam, so an answer that straddles a
+    # boundary is still retrievable from either side.
+    chunk_overlap: int = 60
 
     # --- server ---------------------------------------------------------------
     host: str = "0.0.0.0"

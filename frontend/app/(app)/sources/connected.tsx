@@ -141,10 +141,15 @@ export function ConnectedSources({ onChanged }: { onChanged: () => void }) {
     try {
       await api.deleteConnector(source.id);
       toast.success(`${source.name} отключён`);
-      refresh();
-      onChanged();
     } catch (cause) {
       toast.error(cause instanceof ApiError ? cause.message : "Что-то пошло не так");
+    } finally {
+      // Either way. Removing a source deletes the row and then republishes the
+      // manifest, so a failure can still have changed the list — and a list
+      // left showing what is no longer there invites the user to try again on
+      // something that is already gone.
+      refresh();
+      onChanged();
     }
   }
 
@@ -273,12 +278,12 @@ function AddForm({
     try {
       await api.addConnector(kind, name, config);
       toast.success("Источник подключён — индекс перестраивается, это занимает секунд 20");
-      onAdded();
     } catch (cause) {
       toast.error(cause instanceof ApiError ? cause.message : "Что-то пошло не так");
-    } finally {
       setSaving(false);
+      return;
     }
+    onAdded();
   }
 
   return (

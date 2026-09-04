@@ -22,6 +22,8 @@ from app.models import Source
 
 router = APIRouter(prefix="/api/connectors", tags=["connectors"])
 
+_KINDS = {kind.value for kind in Kind}
+
 
 class ConnectorOut(BaseModel):
     id: uuid.UUID
@@ -70,7 +72,7 @@ async def list_connectors(
             for row in rows
             # A kind this build no longer knows would break the response model
             # for every other source in the list.
-            if row.kind in {kind.value for kind in Kind}
+            if row.kind in _KINDS
         ],
         enabled=connectors.sealer(settings) is not None,
         gdrive_service_account_email=settings.gdrive_service_account_email,

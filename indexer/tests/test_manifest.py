@@ -129,3 +129,19 @@ def test_an_unreadable_manifest_means_uploads_only(raw):
 def test_the_key_itself_is_checked_before_it_is_used():
     with pytest.raises(ValueError, match="SECRETS_KEY"):
         Sealer("not-a-fernet-key")
+
+
+def test_a_deployment_without_a_key_does_not_watch_the_manifest():
+    """Otherwise it restarts into the same state, forever.
+
+    The baseline ETag would be the empty one recorded without reading, and any
+    manifest already in the bucket differs from it — so the watcher would see a
+    change on its first poll, restart, and record the empty baseline again.
+    """
+    from rag_indexer import manifest
+    from rag_indexer.config import IndexerSettings
+
+    for key in ("", "not-a-fernet-key"):
+        loaded = manifest.load(IndexerSettings(openrouter_api_key="x", secrets_key=key))
+        assert loaded.specs == []
+        assert not loaded.watched

@@ -131,7 +131,7 @@ def main() -> None:
 
     # Started only once the graph is built, so that a source added while the
     # index was still starting restarts a process that is actually running.
-    manifest.watch(settings, sources.etag)
+    manifest.watch(settings, sources)
 
     logger.info("indexer listening on http://%s:%s", settings.host, settings.port)
     server.run(

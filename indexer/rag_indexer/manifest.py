@@ -42,30 +42,40 @@ class Manifest:
     #: What the bucket held when these specs were read. Empty when there is no
     #: manifest yet, which is the normal state until the first source is added.
     etag: str
+    #: Whether the source list is ours to act on at all. False when this
+    #: deployment has no usable SECRETS_KEY — and then the manifest must not be
+    #: watched: its ETag would differ from the empty baseline we recorded, and
+    #: the process would restart into the same state, forever.
+    watched: bool = True
 
 
 def load(settings: IndexerSettings) -> Manifest:
     """The current source list. Never raises: no manifest means uploads only."""
     if not settings.secrets_key:
         logger.warning("SECRETS_KEY is not set; connected sources are disabled")
-        return Manifest(specs=[], etag="")
+        return Manifest(specs=[], etag="", watched=False)
 
     try:
         sealer = Sealer(settings.secrets_key)
     except ValueError:
         logger.exception("SECRETS_KEY is unusable; connected sources are disabled")
-        return Manifest(specs=[], etag="")
+        return Manifest(specs=[], etag="", watched=False)
 
     raw, etag = _fetch(settings)
     if raw is None:
+        # No manifest yet, or MinIO was briefly unreachable. Watching from an
+        # empty baseline is right for both: the first source to appear, or the
+        # manifest we failed to read, restarts us into a correct build.
         return Manifest(specs=[], etag="")
     return Manifest(specs=load_manifest(raw, sealer), etag=etag)
 
 
-def watch(settings: IndexerSettings, etag: str) -> None:
+def watch(settings: IndexerSettings, manifest: Manifest) -> None:
     """Restart this process when the source list changes underneath it."""
+    if not manifest.watched:
+        return
     thread = threading.Thread(
-        target=_watch, args=(settings, etag), name="manifest-watch", daemon=True
+        target=_watch, args=(settings, manifest.etag), name="manifest-watch", daemon=True
     )
     thread.start()
 

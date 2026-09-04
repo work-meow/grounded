@@ -40,7 +40,15 @@ class DocumentOut(BaseModel):
 
 
 async def _files_source(session: AsyncSession, user_id: uuid.UUID) -> Source:
-    """One implicit 'Uploaded files' source per user, created on demand."""
+    """One implicit 'Uploaded files' source per user, created on demand.
+
+    ponytail: select-then-insert, with no unique constraint behind it. Two
+    uploads racing on a user's very first file can create two rows. Ceiling:
+    a duplicate source row — invisible, because documents are listed and
+    filtered by user_id, never by source. Upgrade path: a unique index on
+    (user_id, kind) and an upsert, if a connector ever makes sources
+    user-visible.
+    """
     source = (
         await session.execute(
             select(Source).where(Source.user_id == user_id, Source.kind == "files")
@@ -125,8 +133,11 @@ async def upload(
     mime_type = ALLOWED_SUFFIXES[suffix]
     key = build_key(user_id, source.id, document_id, filename)
 
-    # S3 first: a row without an object would show "processing" forever, while
-    # an object without a row is invisible and harmless.
+    # S3 first. A row without an object would sit at "processing" forever with
+    # nothing to fix it. The other way round — an object the commit below never
+    # records — the file is indexed and searchable but has no row to open, so a
+    # citation to it fails to resolve. That is the better failure of the two:
+    # the answer is still right, and re-uploading the file repairs it.
     await storage.put(settings, key, body, mime_type)
 
     document = Document(

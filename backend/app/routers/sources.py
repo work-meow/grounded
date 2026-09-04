@@ -66,6 +66,17 @@ async def _ready_ids(settings: Settings, user_id: uuid.UUID) -> set[str]:
 
     A down indexer must not take the file list down with it — the files simply
     read as still processing, which is also what the user would do about it.
+
+    This call costs about 1.5 s after any pause, and about 15 ms if another one
+    just preceded it — measured on the deployment box, and stable across runs.
+    Pathway answers /v1/inputs from a snapshot it refreshes on a cycle, so a
+    request that arrives mid-cycle waits for the next one. The list page is
+    therefore slow to first paint and cheap to poll.
+
+    That is deliberately not cached here. Readiness has exactly one home — the
+    indexer — and a cache would make the UI able to claim a document is
+    searchable while the process that answers searches disagrees. A skeleton for
+    a second and a half is the cheaper of the two failures.
     """
     try:
         return await retriever.ready_document_ids(settings, user_id)

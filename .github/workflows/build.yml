@@ -184,6 +184,11 @@ jobs:
               print('tables:', sorted(names))
           asyncio.run(main())
           "
+          # And that they match the models. `alembic upgrade` proves the
+          # migrations run; only this proves they describe what app/models.py
+          # says — an index or constraint added to a model and forgotten in a
+          # migration passes every other check in this file.
+          docker exec backend alembic check
 
       # The queries themselves, against a real database. The unit tests cannot
       # reach this: they never open a connection, so a mistake in how a result

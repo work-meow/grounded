@@ -11,13 +11,14 @@ import json
 import uuid
 
 import pytest
+from pydantic import ValidationError
 from rag_shared.connectors import MANIFEST_KEY, REQUIRED_FIELDS, Kind, load_manifest
 from rag_shared.crypto import Sealer, generate_key
 
 from app import connectors, storage
 from app.config import Settings
 from app.models import Source
-from app.routers.connectors import ConnectorOut, ConnectorsOut
+from app.routers.connectors import ConnectorIn, ConnectorOut, ConnectorsOut
 
 KEY = generate_key()
 
@@ -45,6 +46,17 @@ def test_a_missing_field_is_named_in_the_error(missing):
 
     with pytest.raises(ValueError, match=missing):
         connectors.clean_config(Kind.YANDEX, config)
+
+
+def test_a_config_with_too_many_keys_is_refused_before_it_is_read():
+    """clean_config keeps only what the kind needs — but by then the body has
+    already been parsed into a dict."""
+    with pytest.raises(ValidationError):
+        ConnectorIn(
+            kind=Kind.NOTION,
+            name="x",
+            config={f"k{i}": "v" for i in range(1000)},
+        )
 
 
 def test_a_field_long_enough_to_be_storage_is_refused():

@@ -120,6 +120,30 @@ async def test_one_impossible_object_does_not_take_out_the_file_list(pathway):
     assert await documents_of(ALICE) == {}
 
 
+@pytest.mark.parametrize(
+    "pathway",
+    [
+        [entry(ALICE, CONNECTED, "INDEXED", web_url=url)]
+        for url in ("javascript:alert(1)", "data:text/html,<script>", "file:///etc/passwd", "")
+    ],
+    indirect=True,
+)
+async def test_a_link_that_is_not_a_web_page_is_dropped(pathway):
+    """The UI opens this with window.open, where a javascript: URL runs in a
+    document that inherits our origin. The value comes from somebody else's
+    API."""
+    assert (await documents_of(ALICE))[str(CONNECTED)].web_url is None
+
+
+@pytest.mark.parametrize(
+    "pathway",
+    [[entry(ALICE, CONNECTED, "INDEXED", web_url="https://notion.so/p")]],
+    indirect=True,
+)
+async def test_a_real_link_survives(pathway):
+    assert (await documents_of(ALICE))[str(CONNECTED)].web_url == "https://notion.so/p"
+
+
 @pytest.mark.parametrize("pathway", [[]], indirect=True)
 async def test_an_empty_index_lists_nothing(pathway):
     assert await documents_of(ALICE) == {}

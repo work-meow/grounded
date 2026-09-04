@@ -88,6 +88,19 @@ def _as_int(value: Any) -> int | None:
         return None
 
 
+#: The only schemes a document link may use. A connector's `web_url` is a string
+#: from somebody else's API that this API hands to the browser, and the browser
+#: opens it with window.open — where a `javascript:` URL runs in a document that
+#: inherits our origin. Neither Google nor Notion would send one; a trust
+#: boundary is not the place to rely on that.
+_OPENABLE = ("https://", "http://")
+
+
+def _web_url(value: Any) -> str | None:
+    url = str(value or "").strip()
+    return url if url.startswith(_OPENABLE) else None
+
+
 def _is_uuid(value: str) -> bool:
     try:
         UUID(value)
@@ -195,7 +208,7 @@ async def indexed_documents(settings: Settings, user_id: UUID) -> list[IndexedDo
                 document_id=parsed["document_id"],
                 source_id=parsed["source_id"],
                 filename=parsed["filename"],
-                web_url=entry.get("web_url") or None,
+                web_url=_web_url(entry.get("web_url")),
                 size_bytes=_as_int(entry.get("size")),
                 modified_at=_as_int(entry.get("modified_at")) or 0,
                 ready=entry.get("_indexing_status") == "INDEXED",

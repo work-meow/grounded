@@ -48,7 +48,11 @@ class ConnectorsOut(BaseModel):
 class ConnectorIn(BaseModel):
     kind: Kind
     name: str = Field(min_length=1, max_length=200)
-    config: dict[str, str]
+    # Bounded because it is parsed before anything looks at it: clean_config
+    # keeps only the fields the kind needs, but by then a body with a hundred
+    # thousand keys has already been turned into a dict. No kind needs more
+    # than four.
+    config: dict[str, str] = Field(max_length=16)
 
 
 @router.get("")

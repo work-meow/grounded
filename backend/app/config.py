@@ -16,9 +16,9 @@ class Settings(BaseSettings):
     # Tokens are minted out of band with `uv run rag-token <user-id>` and pasted
     # into the login screen. HS256 keeps key management to a single secret.
     jwt_secret: str = Field(min_length=32)
-    jwt_algorithm: str = "HS256"
     jwt_issuer: str = "rag"
-    # The cookie's name is a constant in app/security.py, not a setting.
+    # The cookie's name and the signing algorithm are constants in
+    # app/security.py, not settings.
     cookie_secure: bool = True
 
     # --- object storage (originals) -------------------------------------------

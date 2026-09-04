@@ -92,6 +92,15 @@ services:
     volumes:
       - indexer-cache:/data
     networks: [rag]
+    healthcheck:
+      # No curl in these images by design. A TCP connect is enough: the server
+      # only binds once the graph is built and the embedder has answered.
+      test: ["CMD", "python", "-c",
+             "import socket; socket.create_connection(('127.0.0.1', 8666), 3).close()"]
+      interval: 20s
+      timeout: 5s
+      retries: 3
+      start_period: 90s
     # The Rust engine plus the in-memory vector and BM25 indexes live here;
     # this is the one service worth giving room on a 3.8 GB box.
     mem_limit: 1300m
@@ -119,6 +128,13 @@ services:
       AGENT_MODEL: ${AGENT_MODEL}
       CORS_ORIGINS: '["https://${APP_DOMAIN}"]'
     networks: [rag, dokploy-network]
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=3)"]
+      interval: 20s
+      timeout: 5s
+      retries: 3
+      start_period: 40s
     mem_limit: 640m
     labels:
       - traefik.enable=true
@@ -144,6 +160,13 @@ services:
     pull_policy: always
     restart: unless-stopped
     networks: [rag, dokploy-network]
+    healthcheck:
+      test: ["CMD", "node", "-e",
+             "fetch('http://127.0.0.1:3000/login').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 20s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
     mem_limit: 320m
     labels:
       - traefik.enable=true

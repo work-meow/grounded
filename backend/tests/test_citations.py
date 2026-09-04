@@ -1,11 +1,19 @@
-"""Citation numbers are what the model is told to cite as [1], [2].
+"""Agent behaviour worth pinning.
 
-If numbering drifts between what the tool returns and what is stored on the
-message, every source link in the UI points at the wrong document.
+Citation numbers are what the model is told to cite as [1], [2]. If numbering
+drifts between what the tool returns and what is stored on the message, every
+source link in the UI points at the wrong document.
 """
 
-from app.agent import _Citations, _render
+from app.agent import _Citations, _model, _render
 from app.retriever import Chunk
+
+
+def test_chat_client_is_shared_across_requests():
+    """Built per request, each client would leak an HTTP connection pool."""
+    first = _model("openai/gpt-4o-mini", "key", 0.0)
+    second = _model("openai/gpt-4o-mini", "key", 0.0)
+    assert first is second
 
 
 def chunk(document_id: str, page: int | None, text: str = "текст") -> Chunk:

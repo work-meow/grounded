@@ -7,6 +7,7 @@ citation bookkeeping that turns retrieved chunks into clickable sources.
 
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
+from functools import lru_cache
 from typing import Any
 from uuid import UUID
 
@@ -124,6 +125,17 @@ def _build_tools(
     return [search_knowledge, list_sources, read_document]
 
 
+@lru_cache(maxsize=1)
+def _model(model: str, api_key: str, temperature: float) -> ChatOpenRouter:
+    """One chat client for the whole process.
+
+    Built per request, this would open a fresh HTTP connection pool on every
+    question and never close it. The client carries no per-user state — only
+    the tools do — so a single instance is safe to share.
+    """
+    return ChatOpenRouter(model=model, api_key=api_key, temperature=temperature)
+
+
 def _history(messages: list[Message]) -> list[BaseMessage]:
     return [HumanMessage(m.content) if m.role == "user" else AIMessage(m.content) for m in messages]
 
@@ -154,11 +166,7 @@ async def answer(
     """
     citations = _Citations()
     agent = create_agent(
-        model=ChatOpenRouter(
-            model=settings.agent_model,
-            api_key=settings.openrouter_api_key,
-            temperature=settings.agent_temperature,
-        ),
+        model=_model(settings.agent_model, settings.openrouter_api_key, settings.agent_temperature),
         tools=_build_tools(settings, user_id, documents, citations),
         system_prompt=SYSTEM_PROMPT,
         middleware=[

@@ -19,6 +19,7 @@ and restarts the process; :mod:`rag_indexer.connectors` explains the rest.
 
 import logging
 import os
+from pathlib import PurePosixPath
 
 import pathway as pw
 from pathway.stdlib.indexing import (
@@ -90,6 +91,30 @@ def configure_logging(level: str) -> None:
         handler.addFilter(_DropPollingNoise())
 
 
+def title_heading(text: str, metadata: dict) -> tuple[str, dict]:
+    """Put the document's own name into its first chunk.
+
+    A file is findable by what it says, not by what it is called: the name lives
+    in metadata, and metadata is not searched. "Wishlist.md" whose body is a list
+    of errands never contains the word "wishlist", so asking for the wishlist
+    finds everything except it — which is exactly what happened on the
+    deployment, and the model then attributed the fragments it did get to the
+    document it had been asked about.
+
+    Prepended, not repeated into every chunk: one heading costs a handful of
+    tokens once, while a name on every chunk would dilute each one and be paid
+    for on every embedding.
+
+    Runs after the tenant post-processor, which is what puts ``filename`` there.
+    """
+    name = PurePosixPath(str(metadata.get("filename") or "")).stem.strip()
+    if not name or text.lstrip().startswith(f"# {name}"):
+        # Notion pages already open with their title; adding it twice would only
+        # spend tokens and make the first chunk read oddly.
+        return text, metadata
+    return f"# {name}\n\n{text}", metadata
+
+
 def build_store(settings: IndexerSettings, specs: list[ConnectorSpec]) -> DocumentStore:
     # Must happen before the embedder is constructed: Pathway builds the OpenAI
     # client itself and never forwards a base URL, so this env var is the only
@@ -143,7 +168,9 @@ def build_store(settings: IndexerSettings, specs: list[ConnectorSpec]) -> Docume
             chunk_overlap=settings.chunk_overlap,
             encoding_name="cl100k_base",
         ),
-        doc_post_processors=[tenant_metadata],
+        # Order matters: tenant_metadata is what puts `filename` in metadata,
+        # and title_heading reads it from there.
+        doc_post_processors=[tenant_metadata, title_heading],
     )
 
 

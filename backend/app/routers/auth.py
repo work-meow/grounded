@@ -17,7 +17,7 @@ class LoginRequest(BaseModel):
 
 
 @router.post("/login")
-def login(body: LoginRequest, response: Response, settings: SettingsDep) -> dict[str, str]:
+async def login(body: LoginRequest, response: Response, settings: SettingsDep) -> dict[str, str]:
     """Exchange a pasted JWT for an HttpOnly cookie.
 
     The token never reaches localStorage — script-readable storage is exactly
@@ -43,11 +43,11 @@ def login(body: LoginRequest, response: Response, settings: SettingsDep) -> dict
 
 
 @router.post("/logout")
-def logout(response: Response, settings: SettingsDep) -> dict[str, bool]:
+async def logout(response: Response, settings: SettingsDep) -> dict[str, bool]:
     response.delete_cookie(settings.session_cookie, path="/")
     return {"ok": True}
 
 
 @router.get("/me")
-def me(user_id: UserDep) -> dict[str, str]:
+async def me(user_id: UserDep) -> dict[str, str]:
     return {"user_id": str(user_id)}

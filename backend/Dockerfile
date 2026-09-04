@@ -37,6 +37,9 @@ RUN useradd --system --uid 10001 rag
 COPY --from=builder --chown=rag:rag /shared /shared
 COPY --from=builder --chown=rag:rag /app /app
 
+# Alembic resolves script_location relative to the working directory, so it has
+# to be set here too — the builder's WORKDIR does not carry across stages.
+WORKDIR /app
 USER rag
 
 EXPOSE 8000

@@ -103,3 +103,77 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,scope=${{ matrix.service }}
           cache-to: type=gha,mode=max,scope=${{ matrix.service }}
+
+  # Unit tests pass on source, not on the image. A missing WORKDIR once shipped
+  # a backend that crash-looped on `alembic upgrade head` because it started in
+  # / instead of /app. This runs the images that were just pushed.
+  smoke:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    env:
+      TAG: sha-${{ github.sha }}
+      # Spelled out: a job-level env entry cannot reference another env entry.
+      IMAGE: ghcr.io/${{ github.repository }}
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: rag
+          POSTGRES_PASSWORD: rag
+          POSTGRES_DB: rag
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: backend migrates and answers
+        run: |
+          docker run -d --name backend --network host \
+            -e DATABASE_URL=postgresql+asyncpg://rag:rag@localhost:5432/rag \
+            -e JWT_SECRET=smoke-test-secret-of-at-least-32-characters \
+            -e OPENROUTER_API_KEY=smoke \
+            "$IMAGE-backend:$TAG"
+          for _ in $(seq 1 30); do
+            curl -fsS localhost:8000/api/health >/dev/null 2>&1 && break
+            sleep 2
+          done
+          curl -fsS localhost:8000/api/health
+          # The tables must actually exist, not just the process be alive.
+          docker exec backend python -c "
+          import asyncio, sqlalchemy as sa
+          from app.db import engine
+          async def main():
+              async with engine.connect() as c:
+                  names = await c.run_sync(lambda s: sa.inspect(s).get_table_names())
+              assert {'users','sources','documents','chats','messages'} <= set(names), names
+              print('tables:', sorted(names))
+          asyncio.run(main())
+          "
+
+      - name: indexer entrypoint imports
+        run: docker run --rm "$IMAGE-indexer:$TAG" python -c "import rag_indexer.pipeline"
+
+      - name: frontend serves the login page
+        run: |
+          docker run -d --name frontend -p 3000:3000 "$IMAGE-frontend:$TAG"
+          for _ in $(seq 1 30); do
+            curl -fsS localhost:3000/login >/dev/null 2>&1 && break
+            sleep 2
+          done
+          curl -fsS localhost:3000/login >/dev/null
+
+      - name: logs on failure
+        if: failure()
+        run: docker logs backend 2>&1 | tail -50; docker logs frontend 2>&1 | tail -20

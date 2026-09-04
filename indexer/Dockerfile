@@ -44,6 +44,8 @@ RUN useradd --system --uid 10001 rag \
 COPY --from=builder --chown=rag:rag /shared /shared
 COPY --from=builder --chown=rag:rag /app /app
 
+# WORKDIR does not carry across build stages.
+WORKDIR /app
 USER rag
 
 EXPOSE 8666

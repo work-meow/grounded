@@ -1,0 +1,13 @@
+# Build context hygiene. Without this the context would carry ~2 GB of
+# virtualenvs and node_modules to a server that has 40 GB of disk and 2 cores.
+**/.venv/
+**/node_modules/
+**/.next/
+**/__pycache__/
+**/*.py[cod]
+**/.pytest_cache/
+**/.ruff_cache/
+**/Cache/
+.git/
+**/.env
+**/.env.local

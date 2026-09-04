@@ -23,8 +23,14 @@ class Settings(BaseSettings):
     s3_bucket: str = "rag"
     s3_region: str = "us-east-1"
     s3_endpoint_url: str | None = None  # set for MinIO / R2 / Backblaze
+    # Where the *browser* reaches the same bucket. Presigned links are signed
+    # for this host; uploads and deletes still go through the internal one, so
+    # they neither leave the box nor wait on a TLS certificate.
+    s3_public_url: str | None = None
     s3_access_key_id: str | None = None
     s3_secret_access_key: str | None = None
+    # MinIO and most self-hosted gateways need bucket-in-path addressing.
+    s3_path_style: bool = False
     max_upload_bytes: int = 64 * 1024 * 1024
 
     # --- Pathway indexer ------------------------------------------------------

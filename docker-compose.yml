@@ -1,0 +1,155 @@
+# Deployment for the Dokploy host.
+#
+# PostgreSQL is NOT here: the box already runs one (postgres1-hajnvy on
+# dokploy-network) and a second instance would only compete for the 3.8 GB of
+# RAM this server has. DATABASE_URL points at it.
+#
+# Everything is reached through the existing Traefik on one hostname:
+#   /api/*  -> backend      /*  -> frontend
+# which makes the session cookie first-party and removes CORS entirely.
+# The bucket gets its own hostname because presigned links are opened by the
+# browser, not by us.
+
+services:
+  minio:
+    image: minio/minio:RELEASE.2025-04-22T22-12-26Z
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${S3_ACCESS_KEY_ID}
+      MINIO_ROOT_PASSWORD: ${S3_SECRET_ACCESS_KEY}
+      # Signed links must verify against the host the browser used.
+      MINIO_SERVER_URL: ${S3_PUBLIC_URL}
+    volumes:
+      - minio-data:/data
+    networks: [rag, dokploy-network]
+    mem_limit: 512m
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=dokploy-network
+      - traefik.http.routers.rag-s3-web.rule=Host(`${S3_DOMAIN}`)
+      - traefik.http.routers.rag-s3-web.entrypoints=web
+      - traefik.http.routers.rag-s3-web.middlewares=redirect-to-https@file
+      - traefik.http.routers.rag-s3-web.service=rag-s3
+      - traefik.http.routers.rag-s3.rule=Host(`${S3_DOMAIN}`)
+      - traefik.http.routers.rag-s3.entrypoints=websecure
+      - traefik.http.routers.rag-s3.tls.certresolver=letsencrypt
+      - traefik.http.routers.rag-s3.service=rag-s3
+      - traefik.http.services.rag-s3.loadbalancer.server.port=9000
+
+  # One-shot: make the bucket, then exit.
+  minio-init:
+    image: minio/mc:RELEASE.2025-04-16T18-13-26Z
+    depends_on:
+      minio: {condition: service_healthy}
+    networks: [rag]
+    entrypoint: >
+      sh -c "mc alias set local http://minio:9000 '${S3_ACCESS_KEY_ID}' '${S3_SECRET_ACCESS_KEY}' &&
+             mc mb --ignore-existing local/${S3_BUCKET} &&
+             echo 'bucket ready'"
+    restart: "no"
+
+  indexer:
+    build:
+      context: .
+      dockerfile: indexer/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      minio: {condition: service_healthy}
+    environment:
+      S3_BUCKET: ${S3_BUCKET}
+      S3_REGION: ${S3_REGION}
+      S3_ENDPOINT_URL: http://minio:9000
+      S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID}
+      S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY}
+      S3_PATH_STYLE: "true"
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL}
+      CACHE_DIR: /data/cache
+      PORT: "8666"
+    volumes:
+      - indexer-cache:/data
+    networks: [rag]
+    # The Rust engine plus the in-memory vector and BM25 indexes live here;
+    # this is the one service worth giving room on a 3.8 GB box.
+    mem_limit: 1300m
+
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      minio: {condition: service_healthy}
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      JWT_SECRET: ${JWT_SECRET}
+      COOKIE_SECURE: "true"
+      S3_BUCKET: ${S3_BUCKET}
+      S3_REGION: ${S3_REGION}
+      S3_ENDPOINT_URL: http://minio:9000
+      S3_PUBLIC_URL: ${S3_PUBLIC_URL}
+      S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID}
+      S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY}
+      S3_PATH_STYLE: "true"
+      PATHWAY_URL: http://indexer:8666
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
+      AGENT_MODEL: ${AGENT_MODEL}
+      CORS_ORIGINS: '["https://${APP_DOMAIN}"]'
+    networks: [rag, dokploy-network]
+    mem_limit: 640m
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=dokploy-network
+      # Higher priority than the catch-all frontend router below.
+      - traefik.http.routers.rag-api-web.rule=Host(`${APP_DOMAIN}`) && PathPrefix(`/api`)
+      - traefik.http.routers.rag-api-web.entrypoints=web
+      - traefik.http.routers.rag-api-web.priority=100
+      - traefik.http.routers.rag-api-web.middlewares=redirect-to-https@file
+      - traefik.http.routers.rag-api-web.service=rag-api
+      - traefik.http.routers.rag-api.rule=Host(`${APP_DOMAIN}`) && PathPrefix(`/api`)
+      - traefik.http.routers.rag-api.entrypoints=websecure
+      - traefik.http.routers.rag-api.priority=100
+      - traefik.http.routers.rag-api.tls.certresolver=letsencrypt
+      - traefik.http.routers.rag-api.service=rag-api
+      - traefik.http.services.rag-api.loadbalancer.server.port=8000
+
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+      args:
+        # Empty on purpose: the UI calls /api on its own origin.
+        NEXT_PUBLIC_API_URL: ""
+    restart: unless-stopped
+    networks: [rag, dokploy-network]
+    mem_limit: 320m
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=dokploy-network
+      - traefik.http.routers.rag-web-http.rule=Host(`${APP_DOMAIN}`)
+      - traefik.http.routers.rag-web-http.entrypoints=web
+      - traefik.http.routers.rag-web-http.priority=1
+      - traefik.http.routers.rag-web-http.middlewares=redirect-to-https@file
+      - traefik.http.routers.rag-web-http.service=rag-web
+      - traefik.http.routers.rag-web.rule=Host(`${APP_DOMAIN}`)
+      - traefik.http.routers.rag-web.entrypoints=websecure
+      - traefik.http.routers.rag-web.priority=1
+      - traefik.http.routers.rag-web.tls.certresolver=letsencrypt
+      - traefik.http.routers.rag-web.service=rag-web
+      - traefik.http.services.rag-web.loadbalancer.server.port=3000
+
+volumes:
+  minio-data:
+  indexer-cache:
+
+networks:
+  rag:
+  dokploy-network:
+    external: true

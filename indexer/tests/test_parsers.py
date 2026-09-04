@@ -126,3 +126,37 @@ def test_a_zip_bomb_is_refused_before_anything_is_unpacked(monkeypatch):
         archive.writestr("word/document.xml", b"\0" * 4096)
 
     assert parse_document(buffer.getvalue()) == []
+
+
+def test_an_enormous_document_is_trimmed_rather_than_indexed_whole(monkeypatch, caplog):
+    """A 64 MB text file is inside the API's upload limit and outside this one.
+
+    Left alone it became ~130k embedding calls and 1.7 GB of resident memory on
+    the deployment box, with search unavailable throughout.
+    """
+    monkeypatch.setattr(parsers, "_MAX_TEXT_CHARS", 1000)
+
+    ((text, _),) = parse_document(("абзац. " * 5000).encode())
+
+    assert len(text) == 1000
+    assert "over the 1000 budget" in caplog.text
+
+
+def test_the_budget_cuts_on_a_page_boundary_so_numbers_still_mean_something(monkeypatch):
+    monkeypatch.setattr(parsers, "_MAX_TEXT_CHARS", 1200)
+
+    pdf = FPDF()
+    for page in range(1, 6):
+        pdf.add_page()
+        pdf.set_font("Helvetica", size=12)
+        pdf.multi_cell(0, 8, f"Page {page}. " + "filler text here. " * 40)
+    parsed = parse_document(bytes(pdf.output()))
+
+    pages = [meta["page_number"] for _, meta in parsed]
+    assert pages == sorted(pages) and pages[0] == 1
+    assert sum(len(text) for text, _ in parsed) <= 1200
+
+
+def test_a_document_within_the_budget_is_returned_untouched():
+    raw = "короткий документ".encode()
+    assert parse_document(raw) == [("короткий документ", {})]

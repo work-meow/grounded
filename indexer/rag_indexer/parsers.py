@@ -34,6 +34,20 @@ _ZIP_MAGIC = b"PK\x03\x04"
 # are capped at 64 MB, so a hundredfold expansion is already generous.
 _MAX_UNCOMPRESSED_BYTES = 6 * 1024 * 1024 * 1024
 
+# How much text one document may contribute to the index.
+#
+# A document's size is not a storage question here. The splitter turns every
+# 500 tokens into a chunk and every chunk into an embedding call, and the whole
+# index lives in this process's memory. Measured on the deployment box: a 64 MB
+# text file — which the API's own upload limit allows — drove the indexer from
+# 225 MB to 1.7 GB, made every search time out for as long as it ran, and
+# queued on the order of a hundred thousand embedding calls against a paid API.
+# Nothing about that is a failure the operator would have chosen.
+#
+# 8 million characters is roughly four thousand pages of prose: far beyond any
+# document a person actually asks questions about, and far short of the wall.
+_MAX_TEXT_CHARS = 8_000_000
+
 logger = logging.getLogger(__name__)
 
 
@@ -46,13 +60,46 @@ def parse_document(contents: bytes) -> list[tuple[str, dict]]:
     """
     try:
         if contents.startswith(_PDF_MAGIC):
-            return _pdf(contents)
-        if contents.startswith(_ZIP_MAGIC):
-            return _ooxml(contents)
-        return _plain_text(contents)
+            parsed = _pdf(contents)
+        elif contents.startswith(_ZIP_MAGIC):
+            parsed = _ooxml(contents)
+        else:
+            parsed = _plain_text(contents)
     except Exception:
         logger.exception("could not parse a %d-byte document", len(contents))
         return []
+    return _within_budget(parsed)
+
+
+def _within_budget(entries: list[tuple[str, dict]]) -> list[tuple[str, dict]]:
+    """Trim a document to _MAX_TEXT_CHARS, keeping whole parts where it can.
+
+    Cutting on a part boundary keeps page numbers meaning what they say. A
+    single part larger than the whole budget — one enormous text file — is
+    truncated instead of dropped: the beginning of a document is worth more
+    than nothing, and the log says what happened.
+    """
+    total = sum(len(text) for text, _ in entries)
+    if total <= _MAX_TEXT_CHARS:
+        return entries
+
+    kept: list[tuple[str, dict]] = []
+    spent = 0
+    for text, metadata in entries:
+        remaining = _MAX_TEXT_CHARS - spent
+        if remaining <= 0:
+            break
+        kept.append((text[:remaining], metadata))
+        spent += min(len(text), remaining)
+
+    logger.warning(
+        "document holds %d characters, over the %d budget; indexed %d of %d parts",
+        total,
+        _MAX_TEXT_CHARS,
+        len(kept),
+        len(entries),
+    )
+    return kept
 
 
 def _pdf(contents: bytes) -> list[tuple[str, dict]]:

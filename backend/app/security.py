@@ -5,6 +5,13 @@ import jwt
 
 from app.config import Settings
 
+# One name, defined once. It used to be a setting that only auth.py honoured —
+# deps.py read a hard-coded alias, because FastAPI's Cookie(alias=...) has to be
+# a constant. Changing the setting therefore issued a cookie nothing read, and
+# locked every user out until it was changed back. A knob whose only reachable
+# setting is its default is not a knob.
+SESSION_COOKIE = "rag_session"
+
 _LEEWAY_S = 30
 
 

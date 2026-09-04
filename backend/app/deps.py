@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings, get_settings
 from app.db import get_session
-from app.security import read_token
+from app.security import SESSION_COOKIE, read_token
 
 
 # Both dependencies are async even though neither awaits anything: FastAPI
@@ -26,12 +26,12 @@ _UNAUTHORIZED = HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="
 
 async def current_user(
     settings: SettingsDep,
-    rag_session: Annotated[str | None, Cookie(alias="rag_session")] = None,
+    session_cookie: Annotated[str | None, Cookie(alias=SESSION_COOKIE)] = None,
 ) -> UUID:
-    if not rag_session:
+    if not session_cookie:
         raise _UNAUTHORIZED
     try:
-        return read_token(settings, rag_session)
+        return read_token(settings, session_cookie)
     except (jwt.InvalidTokenError, ValueError) as exc:
         raise _UNAUTHORIZED from exc
 

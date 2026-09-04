@@ -3,7 +3,7 @@ from fastapi import APIRouter, HTTPException, Response, status
 from pydantic import BaseModel
 
 from app.deps import SettingsDep, UserDep
-from app.security import read_token
+from app.security import SESSION_COOKIE, read_token
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -31,7 +31,7 @@ async def login(body: LoginRequest, response: Response, settings: SettingsDep) -
         ) from exc
 
     response.set_cookie(
-        settings.session_cookie,
+        SESSION_COOKIE,
         body.token.strip(),
         max_age=_COOKIE_MAX_AGE,
         httponly=True,
@@ -44,7 +44,11 @@ async def login(body: LoginRequest, response: Response, settings: SettingsDep) -
 
 @router.post("/logout")
 async def logout(response: Response, settings: SettingsDep) -> dict[str, bool]:
-    response.delete_cookie(settings.session_cookie, path="/")
+    # The same attributes it was set with: a browser matches the pair on name,
+    # path and domain, and a mismatched Secure flag leaves the cookie in place.
+    response.delete_cookie(
+        SESSION_COOKIE, path="/", httponly=True, secure=settings.cookie_secure, samesite="lax"
+    )
     return {"ok": True}
 
 

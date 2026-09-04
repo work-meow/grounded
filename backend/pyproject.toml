@@ -35,6 +35,8 @@ dependencies = [
 rag-token = "app.token:main"
 
 [dependency-groups]
+# httpx is not here: it is already a runtime dependency, and TestClient uses
+# that same one.
 dev = ["pytest>=8.4", "pytest-asyncio>=1.0", "ruff>=0.14"]
 
 # A path dependency rather than a uv workspace: a workspace resolves to one

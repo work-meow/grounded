@@ -1,16 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import {
-  CheckCircle2,
-  FileText,
-  GitBranch,
-  HardDrive,
-  Loader2,
-  NotebookPen,
-  Trash2,
-  Upload,
-} from "lucide-react";
+import { CheckCircle2, FileText, Loader2, Trash2, Upload } from "lucide-react";
 import { toast } from "sonner";
 
 import { Badge } from "@/components/ui/badge";
@@ -19,14 +10,10 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ApiError, api, type DocumentOut } from "@/lib/api";
 
+import { ConnectedSources } from "./connected";
+
 const ACCEPT = ".pdf,.docx,.pptx,.xlsx,.txt,.md";
 const POLL_MS = 3000;
-
-const PLANNED = [
-  { name: "Google Drive", icon: HardDrive },
-  { name: "GitHub", icon: GitBranch },
-  { name: "Notion", icon: NotebookPen },
-] as const;
 
 export default function SourcesPage() {
   const [documents, setDocuments] = useState<DocumentOut[]>([]);
@@ -90,6 +77,9 @@ export default function SourcesPage() {
   }
 
   async function remove(document: DocumentOut) {
+    // Guarded here as well as in the UI: a document from a connected source is
+    // removed where it lives, and the API answers 404 for anything else.
+    if (!document.removable) return;
     try {
       await api.deleteDocument(document.id);
       setDocuments((current) => current.filter((item) => item.id !== document.id));
@@ -119,9 +109,11 @@ export default function SourcesPage() {
           />
           <Button onClick={() => fileInput.current?.click()} disabled={uploading}>
             {uploading ? <Loader2 className="size-4 animate-spin" /> : <Upload className="size-4" />}
-            Добавить
+            Загрузить
           </Button>
         </div>
+
+        <ConnectedSources onChanged={refresh} />
 
         <section className="grid gap-3 sm:grid-cols-2">
           {loading ? (
@@ -131,7 +123,7 @@ export default function SourcesPage() {
             </>
           ) : documents.length === 0 ? (
             <p className="text-sm text-muted-foreground sm:col-span-2">
-              Пока ничего не загружено.
+              Пока ничего нет: загрузите файлы или подключите источник.
             </p>
           ) : (
             documents.map((document) => (
@@ -140,22 +132,6 @@ export default function SourcesPage() {
           )}
         </section>
 
-        <section>
-          <h2 className="mb-3 text-sm font-medium text-muted-foreground">Коннекторы</h2>
-          <div className="grid gap-3 sm:grid-cols-3">
-            {PLANNED.map(({ name, icon: Icon }) => (
-              <Card key={name} className="opacity-60">
-                <CardContent className="flex items-center gap-3">
-                  <Icon className="size-5 shrink-0 text-muted-foreground" />
-                  <div className="min-w-0">
-                    <p className="truncate text-sm font-medium">{name}</p>
-                    <p className="text-xs text-muted-foreground">Скоро</p>
-                  </div>
-                </CardContent>
-              </Card>
-            ))}
-          </div>
-        </section>
       </div>
     </div>
   );
@@ -187,23 +163,30 @@ function DocumentCard({
               {ready ? "Проиндексирован" : "Индексация"}
             </Badge>
             <span className="text-xs text-muted-foreground">{size(document.size_bytes)}</span>
+            <span className="text-xs text-muted-foreground">{document.source_name}</span>
           </div>
         </div>
-        <Button
-          variant="ghost"
-          size="icon"
-          className="size-8 opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100"
-          onClick={() => onRemove(document)}
-          aria-label={`Удалить ${document.filename}`}
-        >
-          <Trash2 className="size-4" />
-        </Button>
+        {/* A document from a connected source is deleted where it lives; a
+            button here would either lie or bring it back on the next poll. */}
+        {document.removable && (
+          <Button
+            variant="ghost"
+            size="icon"
+            className="size-8 opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100"
+            onClick={() => onRemove(document)}
+            aria-label={`Удалить ${document.filename}`}
+          >
+            <Trash2 className="size-4" />
+          </Button>
+        )}
       </CardContent>
     </Card>
   );
 }
 
-function size(bytes: number): string {
+function size(bytes: number | null): string {
+  // A Notion page is not a file anywhere, so it has no size to report.
+  if (bytes === null) return "";
   if (bytes < 1024) return `${bytes} Б`;
   if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} КБ`;
   return `${(bytes / 1024 / 1024).toFixed(1)} МБ`;

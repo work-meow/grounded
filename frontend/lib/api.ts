@@ -72,9 +72,31 @@ export type DocumentOut = {
   id: string;
   filename: string;
   mime_type: string;
-  size_bytes: number;
+  /** Unknown for a Notion page, which is not a file anywhere. */
+  size_bytes: number | null;
   created_at: string;
   status: "processing" | "ready";
+  source_name: string;
+  /** False for a document from a connected source: it is removed where it lives. */
+  removable: boolean;
+};
+
+export type ConnectorKind = "gdrive" | "notion" | "yandex" | "dropbox" | "onedrive";
+
+export type ConnectorOut = {
+  id: string;
+  kind: ConnectorKind;
+  name: string;
+  created_at: string;
+};
+
+export type ConnectorsOut = {
+  sources: ConnectorOut[];
+  /** False when the server has no SECRETS_KEY and cannot hold a credential. */
+  enabled: boolean;
+  gdrive_service_account_email: string;
+  /** The API decides which fields a kind needs, so the form cannot disagree. */
+  required_fields: Record<ConnectorKind, string[]>;
 };
 
 export type ChatOut = { id: string; title: string; created_at: string };
@@ -112,6 +134,15 @@ export const api = {
   deleteDocument: (id: string) =>
     request<void>(`/api/sources/${id}`, { method: "DELETE" }),
   documentLink: (id: string) => request<{ url: string }>(`/api/sources/${id}/link`),
+
+  connectors: () => request<ConnectorsOut>("/api/connectors"),
+  addConnector: (kind: ConnectorKind, name: string, config: Record<string, string>) =>
+    request<ConnectorOut>("/api/connectors", {
+      method: "POST",
+      body: JSON.stringify({ kind, name, config }),
+    }),
+  deleteConnector: (id: string) =>
+    request<void>(`/api/connectors/${id}`, { method: "DELETE" }),
 
   chats: () => request<ChatOut[]>("/api/chats"),
   createChat: () => request<ChatOut>("/api/chats", { method: "POST" }),

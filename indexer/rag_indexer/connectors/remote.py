@@ -69,6 +69,16 @@ class RemoteSource(Protocol):
         ...
 
 
+def folder_path(path: str) -> str:
+    """A user-typed folder path, reduced to its bare segments.
+
+    The three services that take one all spell the root differently and none of
+    them accept a stray slash or a stray space. The API trims these too, but a
+    manifest entry is not obliged to have come from the current API.
+    """
+    return path.strip().strip("/")
+
+
 class _PollingSubject(ConnectorSubject):
     """Turns a :class:`RemoteSource` into a live Pathway input."""
 

@@ -84,7 +84,10 @@ class NotionSource:
             # is what a person means by having moved a page to the bin.
             if page.get("archived") or page.get("in_trash"):
                 continue
-            title = _title(page) or "Без названия"
+            # Slashes are ordinary in a Notion title and would otherwise be
+            # read as path separators when the name is cleaned, leaving
+            # "Продажи/2026" showing up in citations as "2026".
+            title = (_title(page) or "Без названия").replace("/", "-")
             files.append(
                 RemoteFile(
                     external_id=page["id"],

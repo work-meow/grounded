@@ -16,7 +16,7 @@ from typing import Any
 from rag_shared.connectors import ConnectorSpec
 
 from rag_indexer.connectors.http import Http, OAuthToken, as_timestamp
-from rag_indexer.connectors.remote import RemoteFile
+from rag_indexer.connectors.remote import RemoteFile, folder_path
 
 _TOKEN_URL = "https://login.microsoftonline.com/common/oauth2/v2.0/token"
 _GRAPH = "https://graph.microsoft.com/v1.0"
@@ -42,7 +42,7 @@ class OneDriveSource:
                 "scope": "Files.Read.All offline_access",
             },
         )
-        self._path = spec.config["path"].strip("/")
+        self._path = folder_path(spec.config["path"])
 
     def close(self) -> None:
         self._http.close()

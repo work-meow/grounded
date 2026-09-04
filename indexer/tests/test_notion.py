@@ -191,3 +191,11 @@ def test_a_page_that_never_stops_nesting_stops_anyway(source):
 def _page_file(connector):
     (file,) = connector.list()
     return file
+
+
+def test_a_slash_in_a_title_is_not_a_folder(source):
+    """The name becomes part of a key, where a slash is a separator."""
+    connector, _ = source([_page(title="Продажи/2026")], {})
+
+    (file,) = connector.list()
+    assert file.filename == "Продажи-2026.md"

@@ -361,3 +361,47 @@ def test_a_name_with_trailing_space_is_still_a_pdf():
 
     assert service.fetched == ["f1"]
     assert parse_key(subject.added[0]["path"])["filename"] == "report.pdf"
+
+
+@pytest.mark.parametrize(
+    ("typed", "yandex", "dropbox", "onedrive"),
+    [
+        ("/", "disk:/", "", ""),
+        ("  /  ", "disk:/", "", ""),
+        ("/Документы/", "disk:/Документы", "/Документы", "Документы"),
+        ("Docs", "disk:/Docs", "/Docs", "Docs"),
+    ],
+)
+def test_a_typed_folder_reaches_each_service_the_way_it_spells_it(typed, yandex, dropbox, onedrive):
+    """Three services, three spellings of the root, one thing a person types."""
+    from rag_indexer.connectors.dropbox import DropboxSource
+    from rag_indexer.connectors.onedrive import OneDriveSource
+    from rag_indexer.connectors.yandex import YandexSource
+
+    def build(cls, kind, config):
+        source = cls(
+            ConnectorSpec(
+                source_id=SOURCE, user_id=USER, kind=kind, name="s", config=config | {"path": typed}
+            )
+        )
+        path = source._path
+        source.close()
+        return path
+
+    assert build(YandexSource, Kind.YANDEX, {"token": "t"}) == yandex
+    assert (
+        build(
+            DropboxSource,
+            Kind.DROPBOX,
+            {"app_key": "a", "app_secret": "b", "refresh_token": "c"},
+        )
+        == dropbox
+    )
+    assert (
+        build(
+            OneDriveSource,
+            Kind.ONEDRIVE,
+            {"client_id": "a", "client_secret": "b", "refresh_token": "c"},
+        )
+        == onedrive
+    )

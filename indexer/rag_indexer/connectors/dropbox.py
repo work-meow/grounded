@@ -17,7 +17,7 @@ from urllib.parse import quote
 from rag_shared.connectors import ConnectorSpec
 
 from rag_indexer.connectors.http import Http, OAuthToken, as_timestamp
-from rag_indexer.connectors.remote import RemoteFile
+from rag_indexer.connectors.remote import RemoteFile, folder_path
 
 _TOKEN_URL = "https://api.dropbox.com/oauth2/token"
 _API = "https://api.dropboxapi.com/2"
@@ -38,7 +38,8 @@ class DropboxSource:
             auth=(spec.config["app_key"], spec.config["app_secret"]),
         )
         # Dropbox spells the account root as the empty string, not "/".
-        self._path = "/" + spec.config["path"].strip("/") if spec.config["path"].strip("/") else ""
+        folder = folder_path(spec.config["path"])
+        self._path = f"/{folder}" if folder else ""
 
     def close(self) -> None:
         self._http.close()

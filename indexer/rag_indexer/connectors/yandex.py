@@ -16,7 +16,7 @@ from urllib.parse import quote
 from rag_shared.connectors import ConnectorSpec
 
 from rag_indexer.connectors.http import Http, as_timestamp
-from rag_indexer.connectors.remote import RemoteFile
+from rag_indexer.connectors.remote import RemoteFile, folder_path
 
 _API = "https://cloud-api.yandex.net/v1/disk"
 _PAGE_SIZE = 200
@@ -34,7 +34,10 @@ class YandexSource:
         # on a storage host that does not want the credential and has no use for
         # it; there is no reason for it to travel further than the API.
         self._downloads = Http(label)
-        self._path = f"{_DISK}/{spec.config['path'].strip('/')}".rstrip("/")
+        # No rstrip: strip("/") has already removed a trailing slash, and
+        # stripping again would turn the disk root "disk:/" into "disk:", which
+        # the API does not recognise.
+        self._path = f"{_DISK}/{folder_path(spec.config['path'])}"
 
     def close(self) -> None:
         self._http.close()

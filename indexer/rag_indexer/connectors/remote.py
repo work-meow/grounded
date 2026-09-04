@@ -154,6 +154,12 @@ class _PollingSubject(ConnectorSubject):
         try:
             listing = self._source.contents()
         except Exception:
+            # ponytail: the failure lives in the log and nowhere else. A token
+            # revoked at the far end therefore leaves the source looking healthy
+            # in the UI, with documents that quietly stop being updated.
+            # Ceiling: a stale source nobody is told about. Upgrade path: the
+            # indexer would have to report back to the API — a channel that does
+            # not exist yet and is the whole cost of fixing this.
             logger.exception("%s: could not be listed; keeping the last snapshot", self._label)
             return
 

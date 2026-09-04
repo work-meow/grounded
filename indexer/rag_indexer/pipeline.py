@@ -101,9 +101,12 @@ def title_heading(text: str, metadata: dict) -> tuple[str, dict]:
     deployment, and the model then attributed the fragments it did get to the
     document it had been asked about.
 
-    Prepended, not repeated into every chunk: one heading costs a handful of
-    tokens once, while a name on every chunk would dilute each one and be paid
-    for on every embedding.
+    Runs once per *parsed part*, not once per document: the parser returns a
+    PDF page by page, Pathway flattens that into rows, and post-processors see
+    the rows. So a twelve-page PDF gets its name at the top of all twelve, and
+    the splitter then carries it into the first chunk of each. That is more
+    useful than the first page alone — a question about a document by name can
+    land anywhere in it — and costs about five tokens per page.
 
     Runs after the tenant post-processor, which is what puts ``filename`` there.
     """

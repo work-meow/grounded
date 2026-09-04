@@ -59,6 +59,10 @@ target-version = "py313"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "RUF"]
+# RUF001-003: the product speaks Russian, so Cyrillic in strings, comments and
+# docstrings is intentional rather than a homoglyph typo. Same reasoning, and
+# the same line, as backend/pyproject.toml.
+ignore = ["RUF001", "RUF002", "RUF003"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -160,3 +160,29 @@ def test_the_budget_cuts_on_a_page_boundary_so_numbers_still_mean_something(monk
 def test_a_document_within_the_budget_is_returned_untouched():
     raw = "короткий документ".encode()
     assert parse_document(raw) == [("короткий документ", {})]
+
+
+def test_the_document_name_reaches_the_text_that_is_indexed():
+    """A file is findable by what it says; its name is metadata, and metadata is
+    not searched. "Wishlist.md" listing errands never says "wishlist"."""
+    from rag_indexer.pipeline import title_heading
+
+    text, _ = title_heading("- [ ] Сделать карту", {"filename": "Wishlist.md"})
+    assert text.startswith("# Wishlist\n\n")
+
+
+def test_a_name_is_not_added_twice():
+    """Notion pages already open with their title."""
+    from rag_indexer.pipeline import title_heading
+
+    text, _ = title_heading("# Заметка\n\nтекст", {"filename": "Заметка.md"})
+    assert text.count("# Заметка") == 1
+
+
+@pytest.mark.parametrize(
+    "metadata", [{}, {"filename": ""}, {"filename": "   "}, {"filename": None}]
+)
+def test_a_document_with_no_usable_name_is_left_alone(metadata):
+    from rag_indexer.pipeline import title_heading
+
+    assert title_heading("текст", metadata) == ("текст", metadata)

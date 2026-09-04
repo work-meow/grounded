@@ -38,8 +38,8 @@ FALLBACK_NAME = "документ"
 #: dataflow has advanced past it, and the frontier advances no faster than the
 #: slowest committing input. At Pathway's default of 1500 ms every search and
 #: every file listing waited for the next tick: measured on the deployment,
-#: /v1/retrieve took 1.1-1.9 s and /v1/inputs a flat 1.48 s, almost all of it
-#: waiting. At 100 ms the same calls take 0.09-0.10 s.
+#: /v1/retrieve took 1.1–1.9 s and /v1/inputs a flat 1.48 s, almost all of it
+#: waiting. At 100 ms the same calls take 0.09–0.10 s.
 #:
 #: The cost is that the engine ticks fifteen times more often: CPU on an idle
 #: index went from 2.5% to 7%, and the persistence log from 79 lines a minute to

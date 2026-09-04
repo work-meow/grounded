@@ -34,59 +34,44 @@ export default function SourcesPage() {
   const [uploading, setUploading] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
 
-  const refresh = useCallback(async () => {
-    try {
-      setDocuments(await api.documents());
-    } catch (cause) {
-      toast.error(describe(cause));
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+  // Bumped to ask for a fresh load once an upload has landed. A delete just
+  // drops the row locally — there is nothing to wait for.
+  const [reload, setReload] = useState(0);
+  const refresh = useCallback(() => setReload((n) => n + 1), []);
 
+  // One effect owns fetching. Indexing happens out of band in Pathway, so the
+  // list polls itself — but only while something is still being indexed, and
+  // never in parallel: the next poll is scheduled by the one that finished,
+  // where setInterval would stack requests whenever a call ran long.
   useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const loaded = await api.documents();
-        if (!cancelled) setDocuments(loaded);
-      } catch (cause) {
-        if (!cancelled) toast.error(describe(cause));
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  // Indexing happens out of band in Pathway, so poll — but only while something
-  // is actually still being indexed.
-  const anyProcessing = documents.some((document) => document.status === "processing");
-  useEffect(() => {
-    if (!anyProcessing) return;
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout>;
 
-    // setInterval would stack requests whenever one takes longer than the
-    // interval. Each poll schedules the next only once it has finished.
-    const tick = async () => {
+    const load = async (announceFailure: boolean) => {
       try {
         const loaded = await api.documents();
-        if (!cancelled) setDocuments(loaded);
-      } catch {
-        // A dropped poll is not worth interrupting the user; the next one runs.
+        if (cancelled) return;
+        setDocuments(loaded);
+        setLoading(false);
+        if (loaded.some((document) => document.status === "processing")) {
+          timer = setTimeout(() => void load(false), POLL_MS);
+        }
+      } catch (cause) {
+        if (cancelled) return;
+        setLoading(false);
+        // A dropped poll is not worth interrupting the user over; a failed
+        // first load is the difference between an empty list and a broken one.
+        if (announceFailure) toast.error(describe(cause));
+        else timer = setTimeout(() => void load(false), POLL_MS);
       }
-      if (!cancelled) timer = setTimeout(tick, POLL_MS);
     };
 
-    timer = setTimeout(tick, POLL_MS);
+    void load(true);
     return () => {
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [anyProcessing]);
+  }, [reload]);
 
   async function upload(files: FileList | null) {
     if (!files?.length) return;
@@ -101,7 +86,7 @@ export default function SourcesPage() {
     }
     setUploading(false);
     if (fileInput.current) fileInput.current.value = "";
-    await refresh();
+    refresh();
   }
 
   async function remove(document: DocumentOut) {

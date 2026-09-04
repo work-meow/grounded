@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { FolderOpen, LogOut, MessagesSquare, Sparkles } from "lucide-react";
+import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -28,7 +29,15 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
       .me()
       .then(({ user_id }) => !cancelled && setUserId(user_id))
       .catch((cause) => {
-        if (cause instanceof ApiError && cause.status === 401) router.replace("/login");
+        if (cancelled) return;
+        if (cause instanceof ApiError && cause.status === 401) {
+          router.replace("/login");
+          return;
+        }
+        // Anything else — the API is down, the network is gone — used to be
+        // swallowed, leaving a skeleton spinning in the header with no reason
+        // given and no reason to expect it to end.
+        toast.error("Сервер недоступен. Обновите страницу.");
       });
     return () => {
       cancelled = true;

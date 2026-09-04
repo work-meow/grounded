@@ -277,7 +277,7 @@ function AddForm({
     setSaving(true);
     try {
       await api.addConnector(kind, name, config);
-      toast.success("Источник подключён — индекс перестраивается, это занимает секунд 20");
+      toast.success("Источник подключён — индекс перестраивается, это занимает до полминуты");
     } catch (cause) {
       toast.error(cause instanceof ApiError ? cause.message : "Что-то пошло не так");
       setSaving(false);

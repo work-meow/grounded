@@ -80,6 +80,16 @@ def build_store(settings: IndexerSettings, specs: list[ConnectorSpec]) -> Docume
     embedder = OpenAIEmbedder(
         model=settings.embedding_model,
         api_key=settings.openrouter_api_key,
+        # Not the default. Without it, `with_cache=True` and a cache directory
+        # buy nothing: that pair enables the UDF cache, and a UDF only uses it
+        # if it asks for a strategy — so every restart re-embedded, and paid
+        # for, the whole corpus. Measured: two calls per restart for one
+        # document, one of them the dimension probe.
+        #
+        # It matters far more now than it did. A source list that changes
+        # restarts this process on purpose, so re-embedding on restart would
+        # put the price of the entire index on every connect and disconnect.
+        cache_strategy=pw.udfs.DiskCache(),
         # Chunks are capped at 500 tokens by the splitter, decades below the
         # embedder's limit, so the truncation path (and its per-chunk lookup
         # warning for non-OpenAI model names) is dead weight.

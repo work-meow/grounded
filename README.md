@@ -244,16 +244,23 @@ cd indexer && uv run pytest && uv run ruff check .
 Это не стилистический выбор. Первая попытка собрать три образа прямо на хосте
 (2 vCPU, 4 ГБ, там же чужой прод) выбрала всю память и уронила машину.
 
+На сервере нужны ровно два файла: `docker-compose.yml` и заполненный `.env`.
+Репозиторий приватный, поэтому `curl` по raw-ссылке вернёт 404 — копируйте из
+своей рабочей копии:
+
 ```bash
-# на сервере, один раз
-mkdir -p /opt/rag && cd /opt/rag
-base=https://raw.githubusercontent.com/MonitizationRSYA/rag/main
-curl -O $base/docker-compose.yml
-curl -o .env $base/.env.example
+ssh root@СЕРВЕР 'mkdir -p /opt/rag'
+scp docker-compose.yml .env.example root@СЕРВЕР:/opt/rag/
+
+ssh root@СЕРВЕР
+cd /opt/rag && mv .env.example .env
 chmod 600 .env        # в нём ключи — заполнить и закрыть от чужих глаз
 
 docker compose pull && docker compose up -d
 ```
+
+`docker-compose.yml` придётся скопировать заново, если он изменился в
+репозитории: `pull` обновляет образы, но не файл, который их описывает.
 
 Обновление после сборки в CI — `docker compose pull && docker compose up -d`:
 `pull_policy: always` и отсутствие секции `build` означают, что развернётся

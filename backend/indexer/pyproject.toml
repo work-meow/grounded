@@ -1,0 +1,46 @@
+[project]
+name = "rag-indexer"
+version = "0.1.0"
+description = "Pathway live index: S3 -> parse -> chunk -> embed -> hybrid retrieval"
+# `unstructured` does not support 3.14 yet.
+requires-python = ">=3.13,<3.14"
+dependencies = [
+    # xpack-llm brings the embedders, parsers, splitters, indexes and REST server.
+    # It pins langchain<0.4 for adapters we do not use, which is exactly why this
+    # lives in its own virtualenv, separate from the API's langchain>=1.0.
+    "pathway[xpack-llm]>=0.32",
+    # UnstructuredParser handles PDF/DOCX/PPTX/XLSX/TXT/MD from one code path.
+    # Installed directly rather than via pathway[xpack-llm-docs], which drags in
+    # docling + paddleocr + torch.
+    #
+    # ponytail: the `pdf` extra is deliberately omitted — it pulls
+    # unstructured-inference + torch + CUDA (~2 GB) for layout detection that
+    # only `strategy="hi_res"` uses. We parse with `strategy="fast"`, which
+    # needs pdfminer.six alone and is the right call for digital PDFs.
+    # Ceiling: scanned/image-only PDFs yield no text. Upgrade path: add the
+    # `pdf` extra and switch the parser to hi_res (or OCR) for those files.
+    "unstructured[docx,pptx,xlsx,md]>=0.18,<0.19",
+    "pdfminer-six>=20250506",
+    "pypdf>=5",
+    "pydantic-settings>=2.11",
+]
+
+[dependency-groups]
+dev = ["pytest>=8.4", "ruff>=0.14"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "RUF"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["rag_indexer"]

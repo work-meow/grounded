@@ -319,7 +319,7 @@ def test_a_polled_source_produces_rows_pathway_can_read():
     assert tagged["filename"] == "Договор.md"
 
 
-def test_every_kind_builds_and_the_tables_concatenate():
+def test_every_kind_builds_and_the_tables_concatenate(monkeypatch):
     """DocumentStore concatenates its inputs, which requires one schema.
 
     Each connector reaches its service differently and produces its metadata
@@ -334,6 +334,7 @@ def test_every_kind_builds_and_the_tables_concatenate():
     from rag_indexer.config import IndexerSettings
     from rag_indexer.connectors import build_tables
 
+    monkeypatch.setenv("GDRIVE_CREDENTIALS_JSON", json.dumps(_service_account_key()))
     configs = {
         Kind.GDRIVE: {"folder_id": "1AbCdEf"},
         Kind.NOTION: {"token": "x"},
@@ -345,10 +346,7 @@ def test_every_kind_builds_and_the_tables_concatenate():
         ConnectorSpec(source_id=uuid.uuid4(), user_id=USER, kind=kind, name=kind.value, config=c)
         for kind, c in configs.items()
     ]
-    settings = IndexerSettings(
-        openrouter_api_key="unused",
-        gdrive_credentials_json=json.dumps({"type": "service_account"}),
-    )
+    settings = IndexerSettings(openrouter_api_key="unused")
 
     tables = build_tables(settings, specs)
 
@@ -356,6 +354,32 @@ def test_every_kind_builds_and_the_tables_concatenate():
     assert len(tables) == len(configs) + 1
     merged = pw.Table.concat_reindex(*(t.select(pw.this.data, pw.this._metadata) for t in tables))
     assert sorted(merged.column_names()) == ["_metadata", "data"]
+
+
+def _service_account_key() -> dict:
+    """A throwaway service account key, generated fresh.
+
+    Google's client parses the private key when the credentials are built, so a
+    placeholder string will not do — and the point of the test above is that
+    every kind reaches a working connector, which for Drive includes this step.
+    """
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    return {
+        "type": "service_account",
+        "project_id": "test",
+        "private_key_id": "test",
+        "private_key": key.private_bytes(
+            serialization.Encoding.PEM,
+            serialization.PrivateFormat.PKCS8,
+            serialization.NoEncryption(),
+        ).decode(),
+        "client_email": "test@test.iam.gserviceaccount.com",
+        "client_id": "1",
+        "token_uri": "https://oauth2.googleapis.com/token",
+    }
 
 
 def test_a_source_that_cannot_be_built_costs_only_itself():
@@ -457,3 +481,132 @@ def test_a_poll_reports_whether_it_worked():
 
     subject._source.listing_fails = True
     assert subject._poll({}) is False
+
+
+# --- Google Drive ------------------------------------------------------------
+
+
+class _Drive:
+    """Google's client, as far as this connector can tell."""
+
+    def __init__(self, tree: dict[str, list[dict]]):
+        self.tree = tree
+        self.queries: list[str] = []
+
+    def files(self):
+        return self
+
+    def list(self, *, q, **kwargs):
+        self.queries.append(q)
+        parents = [part.split("'")[1] for part in q.split(" or ")]
+        items = [item for parent in parents for item in self.tree.get(parent, [])]
+        return _Executed({"files": items})
+
+    def export_media(self, *, fileId, mimeType):
+        return _Executed(b"PK\x03\x04 exported")
+
+    def get_media(self, *, fileId):
+        return _Executed(b"raw bytes")
+
+    def close(self):
+        pass
+
+
+class _Executed:
+    def __init__(self, value):
+        self.value = value
+
+    def execute(self, **kwargs):
+        return self.value
+
+
+@pytest.fixture
+def drive(monkeypatch):
+    from rag_indexer.connectors import gdrive
+
+    def build(tree):
+        fake = _Drive(tree)
+        monkeypatch.setattr("googleapiclient.discovery.build", lambda *a, **k: fake)
+        monkeypatch.setattr(
+            "google.oauth2.service_account.Credentials.from_service_account_info",
+            classmethod(lambda cls, info, **kw: object()),
+        )
+        source = gdrive.GoogleDriveSource(
+            ConnectorSpec(
+                source_id=SOURCE,
+                user_id=USER,
+                kind=Kind.GDRIVE,
+                name="drive",
+                config={"folder_id": "root"},
+            ),
+            {"type": "service_account"},
+        )
+        return source, fake
+
+    return build
+
+
+def _entry(name, mime="application/pdf", **extra):
+    return {"id": f"id-{name}", "name": name, "mimeType": mime, "size": "100"} | extra
+
+
+def test_a_google_doc_is_named_by_what_it_exports_to(drive):
+    """It has no extension of its own, and the parser dispatches on bytes it
+    would never receive unless the file is asked for as a .docx."""
+    source, _ = drive(
+        {"root": [_entry("Импульсивные покупки", "application/vnd.google-apps.document")]}
+    )
+
+    (file,) = source.contents().files
+
+    assert file.filename == "Импульсивные покупки.docx"
+    assert source.fetch(file, 1 << 20).startswith(b"PK")
+
+
+def test_a_plain_file_is_downloaded_rather_than_exported(drive):
+    source, _ = drive({"root": [_entry("Договор.pdf")]})
+
+    (file,) = source.contents().files
+
+    assert file.filename == "Договор.pdf"
+    assert source.fetch(file, 1 << 20) == b"raw bytes"
+
+
+def test_subfolders_are_walked_and_batched(drive):
+    source, fake = drive(
+        {
+            "root": [_entry("a.pdf"), _entry("sub", "application/vnd.google-apps.folder")],
+            "id-sub": [_entry("b.pdf")],
+        }
+    )
+
+    files = source.contents().files
+
+    assert {file.filename for file in files} == {"a.pdf", "b.pdf"}
+    assert len(fake.queries) == 2, "one request per level, not one per folder"
+
+
+def test_an_unreadable_file_still_reaches_the_loop_that_reports_it(drive):
+    """The polling loop is what decides what it can parse, and it says so."""
+    source, _ = drive({"root": [_entry("отпуск.mp4", "video/mp4")]})
+
+    (file,) = source.contents().files
+    assert file.filename == "отпуск.mp4"
+
+
+def test_a_folder_tree_past_the_bound_says_it_is_incomplete(drive):
+    """Pathway's connector silently swaps strategies here and returns nothing.
+    Ours says so, and the loop stops deleting on the strength of it."""
+    from rag_indexer.connectors import gdrive
+
+    deep = {"root": [_entry(f"d{i}", "application/vnd.google-apps.folder") for i in range(40)]}
+    for i in range(40):
+        deep[f"id-d{i}"] = [
+            _entry(f"d{i}-{j}", "application/vnd.google-apps.folder") for j in range(40)
+        ]
+    source, _ = drive(deep)
+
+    listing = source.contents()
+
+    assert not listing.complete
+    assert gdrive._MAX_FOLDERS < 40 * 40

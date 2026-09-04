@@ -12,14 +12,14 @@ token must not cost another user their uploads.
 
 import json
 import logging
-import os
 
 import pathway as pw
 from rag_shared.connectors import ConnectorSpec, Kind
 
 from rag_indexer.config import IndexerSettings
-from rag_indexer.connectors import files, gdrive
+from rag_indexer.connectors import files
 from rag_indexer.connectors.dropbox import DropboxSource
+from rag_indexer.connectors.gdrive import GoogleDriveSource
 from rag_indexer.connectors.notion import NotionSource
 from rag_indexer.connectors.onedrive import OneDriveSource
 from rag_indexer.connectors.remote import RemoteSource, polling_table
@@ -27,8 +27,9 @@ from rag_indexer.connectors.yandex import YandexSource
 
 logger = logging.getLogger(__name__)
 
-#: The kinds served by the shared polling loop. Google Drive is absent because
-#: Pathway has a connector for it that does the same job better.
+#: The kinds served by the shared polling loop, which is all of them. Google
+#: Drive needs a second argument — the deployment's service account key — so it
+#: is built in the branch below rather than looked up here.
 _POLLED: dict[Kind, type[RemoteSource]] = {
     Kind.NOTION: NotionSource,
     Kind.DROPBOX: DropboxSource,
@@ -40,25 +41,23 @@ _POLLED: dict[Kind, type[RemoteSource]] = {
 def build_tables(settings: IndexerSettings, specs: list[ConnectorSpec]) -> list[pw.Table]:
     """The uploads table, plus one table per source that could be connected."""
     tables = [files.build(settings)]
-    credentials: str | None = None
+    credentials: dict | None = None
 
     for spec in specs:
         try:
             if spec.kind is Kind.GDRIVE:
+                # The only kind that needs something from the deployment rather
+                # than from the user, so the only one built by hand.
                 credentials = credentials or _gdrive_credentials(settings)
-                table = gdrive.build(
-                    spec,
-                    credentials_file=credentials,
-                    refresh_interval=settings.refresh_interval_s,
-                    size_limit=settings.max_document_bytes,
-                )
+                source: RemoteSource = GoogleDriveSource(spec, credentials)
             else:
-                table = polling_table(
-                    _POLLED[spec.kind](spec),
-                    spec=spec,
-                    refresh_interval=settings.refresh_interval_s,
-                    size_limit=settings.max_document_bytes,
-                )
+                source = _POLLED[spec.kind](spec)
+            table = polling_table(
+                source,
+                spec=spec,
+                refresh_interval=settings.refresh_interval_s,
+                size_limit=settings.max_document_bytes,
+            )
         except Exception:
             logger.exception(
                 "could not connect %s source %s; skipping it", spec.kind, spec.source_id
@@ -71,32 +70,20 @@ def build_tables(settings: IndexerSettings, specs: list[ConnectorSpec]) -> list[
     return tables
 
 
-#: Google's client takes a path, not a blob, so the key from the environment
-#: has to land somewhere. A fixed name rather than a temporary one: the process
-#: restarts whenever the source list changes, and a fresh file per restart would
-#: accumulate for as long as the container lives.
-_GDRIVE_KEY_PATH = "/tmp/rag-gdrive-credentials.json"
+def _gdrive_credentials(settings: IndexerSettings) -> dict:
+    """The service account key, read once from the environment.
 
-
-def _gdrive_credentials(settings: IndexerSettings) -> str:
-    """The service account key on disk, because Google's client wants a path.
-
-    Written from an environment variable rather than mounted, so the same
-    compose file works with the key held in ``.env`` alongside every other
-    secret. Left in place afterwards: Pathway opens it when the connector's
-    thread starts, not when the graph is built.
+    It stays in memory. Pathway's connector wanted a path, and so needed this
+    written to disk with the care a private key deserves; ours takes the parsed
+    object, so the key never touches the filesystem.
     """
     raw = settings.gdrive_credentials_json.strip()
     if not raw:
         raise RuntimeError("GDRIVE_CREDENTIALS_JSON is not set, so Drive sources cannot be read")
     try:
-        json.loads(raw)
+        credentials = json.loads(raw)
     except ValueError as exc:
         raise RuntimeError("GDRIVE_CREDENTIALS_JSON is not valid JSON") from exc
-
-    # O_NOFOLLOW and an explicit 0600: a predictable name under /tmp is exactly
-    # what a symlink would be planted for, and this file is a private key.
-    handle = os.open(_GDRIVE_KEY_PATH, os.O_CREAT | os.O_WRONLY | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
-    with os.fdopen(handle, "w") as file:
-        file.write(raw)
-    return _GDRIVE_KEY_PATH
+    if not isinstance(credentials, dict):
+        raise RuntimeError("GDRIVE_CREDENTIALS_JSON is not a service account key")
+    return credentials

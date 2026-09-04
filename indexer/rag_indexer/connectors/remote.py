@@ -61,6 +61,10 @@ class RemoteFile:
     #: Bytes, when the listing says. Lets an oversized file be skipped before it
     #: is downloaded rather than after.
     size: int | None = None
+    #: What the service calls the type, for the connector that needs it
+    #: back on download. Google exports its own formats and has to know
+    #: which one it is exporting.
+    mime_type: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

@@ -12,19 +12,19 @@ Everything downstream of the index reads exactly four things off a document:
 * ``size`` — bytes, when the service says. Only so the file list can show one.
 
 Only the S3 connector produces that shape for free, because the API wrote those
-keys itself. Google Drive reports ``id``/``name``/``modifiedTime``; the polling
-connectors report whatever their service does. So every other connector ends
-here. A connector that skipped it would index documents matching no tenant
-filter — invisible rather than leaked, but invisible is still broken.
+keys itself. Every other service reports its own vocabulary — Drive has
+``id``/``name``/``modifiedTime``, Notion has blocks, Dropbox has paths — and
+every one of them ends at :func:`describe`, which is where that becomes a key
+the rest of the system already knows how to read. A connector that skipped it
+would index documents matching no tenant filter: invisible rather than leaked,
+but invisible is still broken.
 """
 
 import time
 import unicodedata
-from collections.abc import Callable
 from pathlib import PurePosixPath
 from uuid import UUID
 
-import pathway as pw
 from rag_shared.doc_key import build_key, document_id_for
 
 #: Shown when a remote file has no usable name. Never empty: the key layout
@@ -84,19 +84,3 @@ def clean_name(filename: str) -> str:
     name = PurePosixPath(filename.replace("\\", "/")).name
     name = "".join(ch for ch in name if unicodedata.category(ch)[0] != "C").strip()
     return name[:200] or FALLBACK_NAME
-
-
-def conform(table: pw.Table, description: Callable[[dict], dict]) -> pw.Table:
-    """Replace a connector's own metadata with ours.
-
-    Not a merge: the connector's fields are dropped. They are the service's
-    vocabulary, they collide across services, and none of them is read anywhere
-    downstream — keeping them would only make it possible to accidentally depend
-    on one.
-    """
-
-    @pw.udf
-    def rebrand(metadata: pw.Json) -> dict:
-        return description(metadata.as_dict())
-
-    return table.select(data=pw.this.data, _metadata=rebrand(pw.this._metadata))

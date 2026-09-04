@@ -84,3 +84,13 @@ def test_chunk_survives_metadata_without_a_page():
     chunk = Chunk.from_hit({"text": "t", "dist": 0.1, "metadata": {}})
     assert chunk.page is None
     assert chunk.document_id is None
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [(14, 14), ("14", 14), (14.0, 14), (None, None), ("стр. 14", None), ({}, None)],
+)
+def test_page_number_survives_the_json_round_trip(raw, expected):
+    """Metadata crosses JSON, so the page can come back as any of these."""
+    chunk = Chunk.from_hit({"text": "t", "dist": 0.1, "metadata": {"page_number": raw}})
+    assert chunk.page == expected

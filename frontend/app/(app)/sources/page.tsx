@@ -66,9 +66,27 @@ export default function SourcesPage() {
   const anyProcessing = documents.some((document) => document.status === "processing");
   useEffect(() => {
     if (!anyProcessing) return;
-    const timer = setInterval(() => void refresh(), POLL_MS);
-    return () => clearInterval(timer);
-  }, [anyProcessing, refresh]);
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout>;
+
+    // setInterval would stack requests whenever one takes longer than the
+    // interval. Each poll schedules the next only once it has finished.
+    const tick = async () => {
+      try {
+        const loaded = await api.documents();
+        if (!cancelled) setDocuments(loaded);
+      } catch {
+        // A dropped poll is not worth interrupting the user; the next one runs.
+      }
+      if (!cancelled) timer = setTimeout(tick, POLL_MS);
+    };
+
+    timer = setTimeout(tick, POLL_MS);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [anyProcessing]);
 
   async function upload(files: FileList | null) {
     if (!files?.length) return;

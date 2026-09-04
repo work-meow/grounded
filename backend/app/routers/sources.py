@@ -8,6 +8,7 @@ from pydantic import BaseModel
 from rag_shared.doc_key import build_key
 from sqlalchemy import delete as sql_delete
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import retriever, storage
 from app.config import Settings
@@ -16,8 +17,9 @@ from app.models import Document, Source
 
 router = APIRouter(prefix="/api/sources", tags=["sources"])
 
-# What the indexer's UnstructuredParser can actually read. Anything else would
-# sit in the bucket forever showing "processing".
+# Must stay in step with indexer/rag_indexer/parsers.py. Anything the indexer
+# cannot read would sit in the bucket forever showing "processing", so it is
+# rejected at the door instead.
 ALLOWED_SUFFIXES = {
     ".pdf": "application/pdf",
     ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -37,7 +39,7 @@ class DocumentOut(BaseModel):
     status: str  # "processing" | "ready"
 
 
-async def _files_source(session: SessionDep, user_id: uuid.UUID) -> Source:
+async def _files_source(session: AsyncSession, user_id: uuid.UUID) -> Source:
     """One implicit 'Uploaded files' source per user, created on demand."""
     source = (
         await session.execute(
@@ -171,7 +173,7 @@ async def remove(
     await session.commit()
 
 
-async def _owned(session: SessionDep, user_id: uuid.UUID, document_id: uuid.UUID) -> Document:
+async def _owned(session: AsyncSession, user_id: uuid.UUID, document_id: uuid.UUID) -> Document:
     document = (
         await session.execute(
             select(Document).where(Document.id == document_id, Document.user_id == user_id)

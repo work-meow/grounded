@@ -42,6 +42,14 @@ def _tenant_filter(user_id: UUID, document_id: UUID | None = None) -> str:
     return clause
 
 
+def _as_page(value: Any) -> int | None:
+    """Metadata crosses JSON, so a page number can arrive as 14, "14" or 14.0."""
+    try:
+        return int(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
 @dataclass(frozen=True, slots=True)
 class Chunk:
     text: str
@@ -53,14 +61,13 @@ class Chunk:
     @classmethod
     def from_hit(cls, hit: dict[str, Any]) -> "Chunk":
         meta = hit.get("metadata") or {}
-        page = meta.get("page_number")
         return cls(
             text=hit.get("text", ""),
             # Pathway sorts ascending by `dist`; flip it so bigger = better.
             score=-float(hit.get("dist", 0.0)),
             document_id=meta.get("document_id"),
             filename=meta.get("filename"),
-            page=int(page) if isinstance(page, (int, float, str)) and str(page).isdigit() else None,
+            page=_as_page(meta.get("page_number")),
         )
 
 

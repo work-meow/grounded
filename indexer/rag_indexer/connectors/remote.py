@@ -30,7 +30,7 @@ from pathway.io.python import ConnectorSubject
 from rag_shared.connectors import ConnectorSpec
 from rag_shared.formats import is_supported
 
-from rag_indexer.connectors.contract import describe
+from rag_indexer.connectors.contract import clean_name, describe
 
 logger = logging.getLogger(__name__)
 
@@ -142,7 +142,10 @@ class _PollingSubject(ConnectorSubject):
         — the file is recorded at this revision so it is not reconsidered, and
         not logged about, every ten minutes for as long as it exists.
         """
-        if not is_supported(file.filename):
+        # The cleaned name, because that is the one the document is indexed
+        # under: a remote file called "report.pdf " has the suffix ".pdf " until
+        # it is cleaned, and would be turned away for a format we do read.
+        if not is_supported(clean_name(file.filename)):
             logger.info("%s: skipping %r, not a format we read", self._label, file.filename)
             return True
         if file.size is not None and file.size > self._size_limit:

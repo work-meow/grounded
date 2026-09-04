@@ -100,7 +100,9 @@ class NotionSource:
     def fetch(self, file: RemoteFile) -> bytes:
         budget = _Budget(_MAX_REQUESTS_PER_PAGE)
         lines = list(self._render(file.external_id, depth=0, budget=budget))
-        if budget.left <= 0:
+        # Negative, not zero: the counter only goes below zero when a request
+        # was actually refused. Exactly spending the budget is not truncation.
+        if budget.left < 0:
             logger.warning("%s: %r is too large to read in full", self._label, file.filename)
         # The title is not a block, and it is often the only place the subject
         # of the page is named at all.

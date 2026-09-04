@@ -350,3 +350,14 @@ def test_a_source_that_cannot_be_built_costs_only_itself():
     tables = build_tables(IndexerSettings(openrouter_api_key="unused"), [broken])
 
     assert len(tables) == 1, "the uploads table survives a Drive source that cannot be built"
+
+
+def test_a_name_with_trailing_space_is_still_a_pdf():
+    """The suffix check must see the name the document is actually indexed under."""
+    service = _Service([_file(name="report.pdf ")])
+    subject = _Subject(service)
+
+    subject._poll({})
+
+    assert service.fetched == ["f1"]
+    assert parse_key(subject.added[0]["path"])["filename"] == "report.pdf"

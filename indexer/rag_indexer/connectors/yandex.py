@@ -28,14 +28,17 @@ _DISK = "disk:"
 
 class YandexSource:
     def __init__(self, spec: ConnectorSpec) -> None:
-        self._http = Http(
-            f"yandex source {spec.source_id}",
-            headers={"Authorization": f"OAuth {spec.config['token']}"},
-        )
+        label = f"yandex source {spec.source_id}"
+        self._http = Http(label, headers={"Authorization": f"OAuth {spec.config['token']}"})
+        # A second client, without the token. Downloads go to a pre-signed href
+        # on a storage host that does not want the credential and has no use for
+        # it; there is no reason for it to travel further than the API.
+        self._downloads = Http(label)
         self._path = f"{_DISK}/{spec.config['path'].strip('/')}".rstrip("/")
 
     def close(self) -> None:
         self._http.close()
+        self._downloads.close()
 
     def list(self) -> Iterable[RemoteFile]:
         files: list[RemoteFile] = []
@@ -56,7 +59,7 @@ class YandexSource:
         href = self._http.json(
             "GET", f"{_API}/resources/download", params={"path": file.external_id}
         )["href"]
-        return self._http.request("GET", href).content
+        return self._downloads.request("GET", href).content
 
     def _items(self, path: str) -> Iterator[dict[str, Any]]:
         for page in range(_MAX_PAGES_PER_FOLDER):

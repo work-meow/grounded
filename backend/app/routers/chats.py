@@ -214,6 +214,10 @@ async def _stream(
 ) -> AsyncIterator[str]:
     """Relay the agent's events as SSE, saving the answer however the turn ends.
 
+    Four events reach the browser: ``step`` while the agent is working, ``token``
+    as the answer is written, ``citations``, and ``done``. Only the answer and
+    its citations are written to the database.
+
     The save sits in ``finally`` because a closed browser tab does not raise
     ``Exception`` — Starlette throws ``GeneratorExit`` into this generator, and
     an ``except Exception`` around the loop would let the tokens already
@@ -227,6 +231,10 @@ async def _stream(
             if kind == "token":
                 parts.append(payload)
                 yield _sse("token", payload)
+            elif kind == "step":
+                # Not saved with the answer: it says what is happening now, and
+                # a finished turn has nothing happening in it.
+                yield _sse("step", payload)
             elif kind == "citations":
                 citations = payload
                 yield _sse("citations", payload)

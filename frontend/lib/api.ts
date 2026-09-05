@@ -199,6 +199,8 @@ export const api = {
 // --- streaming ---------------------------------------------------------------
 
 type StreamHandlers = {
+  /** The name of a tool the agent has just decided to call. */
+  onStep: (tool: string) => void;
   onToken: (text: string) => void;
   onCitations: (citations: Citation[]) => void;
   onError: (message: string) => void;
@@ -270,6 +272,7 @@ function dispatch(record: string, handlers: StreamHandlers): void {
   }
 
   if (event === "token") handlers.onToken(payload as string);
+  else if (event === "step") handlers.onStep(payload as string);
   else if (event === "citations") handlers.onCitations(payload as Citation[]);
   else if (event === "error") handlers.onError(String(payload));
 }

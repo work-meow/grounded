@@ -261,7 +261,11 @@ async def answer(
     question: str,
     history: list[Message],
 ) -> AsyncIterator[tuple[str, Any]]:
-    """Stream ``("token", str)`` events, then one final ``("citations", list)``.
+    """Stream the turn as it happens, ending with one ``("citations", list)``.
+
+    Three kinds of event. ``("step", tool_name)`` when the model decides to call
+    a tool, ``("token", str)`` for the answer as it is written, and the
+    citations at the end.
 
     The agent is compiled per request so that its tools can close over the
     user. Compiling a three-tool graph is cheap next to a single LLM call.
@@ -299,6 +303,14 @@ async def answer(
         async for chunk, meta in agent.astream(inputs, stream_mode="messages"):
             if meta.get("langgraph_node") != "model":
                 continue
+            # The name arrives in the first chunk of each tool call, before its
+            # arguments have finished streaming and well before the tool runs —
+            # so this is the earliest moment anything can be said. Only that
+            # first chunk carries a name, which is what keeps one call to one
+            # event. Verified against the live provider.
+            for call in getattr(chunk, "tool_call_chunks", None) or []:
+                if name := call.get("name"):
+                    yield "step", name
             if text := _text_of(chunk):
                 parts.append(text)
                 yield "token", text

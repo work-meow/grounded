@@ -1,11 +1,13 @@
-"""What the agent is told before it answers.
+"""What the agent is told, and what it says while it works.
 
-A model that does not know the date answers "что на этой неделе" from whatever
-year its training stopped, and the answer looks like an ordinary wrong answer
-rather than a missing fact — which is why this is worth a test rather than a
-line of trust.
+Two small things that both fail quietly. A model that does not know the date
+answers "на этой неделе" from whatever year its training stopped, and the
+answer looks like an ordinary wrong answer rather than a missing fact. And a
+turn that spends four seconds in a tool with nothing on screen is
+indistinguishable from a turn that has hung.
 """
 
+import uuid
 from datetime import UTC, datetime
 from zoneinfo import ZoneInfo
 
@@ -14,6 +16,8 @@ from pydantic import ValidationError
 
 from app import agent
 from app.config import Settings
+
+USER = uuid.UUID("11111111-1111-1111-1111-111111111111")
 
 
 def settings(**overrides) -> Settings:
@@ -61,3 +65,82 @@ def test_a_timezone_that_does_not_exist_is_refused_at_startup():
     of the day — where it would read as the model being broken."""
     with pytest.raises(ValidationError):
         settings(timezone="Europe/Moskva")
+
+
+# --- saying what is happening ------------------------------------------------
+
+
+class _Chunk:
+    """An AIMessageChunk, as far as answer() is concerned."""
+
+    def __init__(self, content="", tool_call_chunks=None):
+        self.content = content
+        self.tool_call_chunks = tool_call_chunks or []
+
+
+def _streaming(monkeypatch, chunks):
+    class _Agent:
+        async def astream(self, _inputs, **_kwargs):
+            for chunk in chunks:
+                yield chunk, {"langgraph_node": "model"}
+
+    monkeypatch.setattr(agent, "create_agent", lambda **_kwargs: _Agent())
+
+
+async def _events(monkeypatch, chunks):
+    _streaming(monkeypatch, chunks)
+    return [event async for event in agent.answer(settings(), USER, "вопрос", [])]
+
+
+async def test_a_tool_call_is_announced_before_anything_is_written(monkeypatch):
+    """The name arrives in the first chunk of the call, before its arguments
+    have finished streaming and before the tool has run — which is the whole
+    point: it is the earliest moment there is anything to show."""
+    events = await _events(
+        monkeypatch,
+        [
+            _Chunk(tool_call_chunks=[{"name": "search_knowledge", "args": "", "index": 0}]),
+            _Chunk(tool_call_chunks=[{"name": None, "args": '{"query"', "index": 0}]),
+            _Chunk(content="сорок"),
+        ],
+    )
+
+    assert events[0] == ("step", "search_knowledge")
+    assert events[1] == ("token", "сорок")
+
+
+async def test_one_call_is_one_announcement(monkeypatch):
+    """Only the first chunk of a call carries a name; the rest are argument
+    fragments. Announcing those too would flicker the label on every token."""
+    events = await _events(
+        monkeypatch,
+        [
+            _Chunk(tool_call_chunks=[{"name": "search_knowledge", "index": 0}]),
+            _Chunk(tool_call_chunks=[{"name": None, "args": "que", "index": 0}]),
+            _Chunk(tool_call_chunks=[{"name": None, "args": "ry", "index": 0}]),
+        ],
+    )
+
+    assert [event for event in events if event[0] == "step"] == [("step", "search_knowledge")]
+
+
+async def test_two_calls_are_two_announcements(monkeypatch):
+    events = await _events(
+        monkeypatch,
+        [
+            _Chunk(tool_call_chunks=[{"name": "search_knowledge", "index": 0}]),
+            _Chunk(tool_call_chunks=[{"name": "read_document", "index": 1}]),
+        ],
+    )
+
+    assert [payload for kind, payload in events if kind == "step"] == [
+        "search_knowledge",
+        "read_document",
+    ]
+
+
+async def test_a_turn_with_no_tools_announces_nothing(monkeypatch):
+    events = await _events(monkeypatch, [_Chunk(content="сорок")])
+
+    assert [event for event in events if event[0] == "step"] == []
+    assert events[0] == ("token", "сорок")

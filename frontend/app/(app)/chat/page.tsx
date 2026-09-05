@@ -18,6 +18,21 @@ import { cn } from "@/lib/utils";
  */
 const LOAD_OLDER_PX = 300;
 
+/**
+ * What the agent is doing, in words, while there is nothing to read yet.
+ *
+ * A turn spends two to seven seconds in retrieval before its first token, and
+ * a bare spinner for that long is indistinguishable from a hung request. The
+ * server sends the tool's name the moment the model picks it — before the
+ * arguments have even finished streaming — so this costs a round trip of
+ * nothing and is the earliest honest thing to show.
+ */
+const STEP_LABEL: Record<string, string> = {
+  search_knowledge: "Ищу в базе знаний",
+  list_sources: "Смотрю, какие есть документы",
+  read_document: "Читаю документ",
+};
+
 export default function ChatPage() {
   const [chats, setChats] = useState<ChatOut[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -29,6 +44,8 @@ export default function ChatPage() {
     chatId: string;
     text: string;
     citations: Citation[];
+    /** The tool the agent reached for last. Empty before it has reached. */
+    step: string;
   } | null>(null);
   const [loading, setLoading] = useState(true);
   // Where the chat continues above what is on screen, and whether that page is
@@ -156,12 +173,13 @@ export default function ChatPage() {
 
     setDraft("");
     setMessages((current) => [...current, localMessage("user", question)]);
-    setStreaming({ chatId: activeId, text: "", citations: [] });
+    setStreaming({ chatId: activeId, text: "", citations: [], step: "" });
 
     // The answer is accumulated here rather than read back out of state: a
     // setState updater must stay pure, and React calls it twice in StrictMode.
     let text = "";
     let citations: Citation[] = [];
+    let step = "";
     let failed = false;
 
     const controller = new AbortController();
@@ -172,13 +190,17 @@ export default function ChatPage() {
         activeId,
         question,
         {
+          onStep: (tool) => {
+            step = tool;
+            setStreaming({ chatId: activeId, text, citations, step });
+          },
           onToken: (chunk) => {
             text += chunk;
-            setStreaming({ chatId: activeId, text, citations });
+            setStreaming({ chatId: activeId, text, citations, step });
           },
           onCitations: (received) => {
             citations = received;
-            setStreaming({ chatId: activeId, text, citations });
+            setStreaming({ chatId: activeId, text, citations, step });
           },
           onError: (message) => {
             failed = true;
@@ -337,6 +359,7 @@ export default function ChatPage() {
                   created_at: "",
                 }}
                 pending={active.text === ""}
+                step={active.step}
               />
             )}
             <div ref={bottomRef} />
@@ -398,7 +421,15 @@ function EmptyState() {
   );
 }
 
-function Bubble({ message, pending = false }: { message: MessageOut; pending?: boolean }) {
+function Bubble({
+  message,
+  pending = false,
+  step = "",
+}: {
+  message: MessageOut;
+  pending?: boolean;
+  step?: string;
+}) {
   const isUser = message.role === "user";
   return (
     <div className={cn("flex", isUser && "justify-end")}>
@@ -409,7 +440,14 @@ function Bubble({ message, pending = false }: { message: MessageOut; pending?: b
             isUser ? "bg-primary text-primary-foreground" : "bg-muted",
           )}
         >
-          {pending ? <Loader2 className="size-4 animate-spin" /> : message.content}
+          {pending ? (
+            <span className="flex items-center gap-2 text-muted-foreground">
+              <Loader2 className="size-4 shrink-0 animate-spin" />
+              {STEP_LABEL[step] ?? "Думаю"}…
+            </span>
+          ) : (
+            message.content
+          )}
         </div>
         {message.citations.length > 0 && <Citations citations={message.citations} />}
       </div>

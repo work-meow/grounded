@@ -293,6 +293,22 @@ jobs:
           cat /tmp/body
           test "$(api localhost:8000/api/search)" = 422
 
+          echo "--- an answer can be marked good or bad, and only an answer"
+          test "$(api -X POST localhost:8000/api/chats)" = 201
+          rated=$(python3 -c "import json;print(json.load(open('/tmp/body'))['id'])")
+          # A message id that is not in this chat: the point is that it is
+          # refused rather than stored somewhere nobody will read it.
+          test "$(api -X PUT "localhost:8000/api/chats/$rated/messages/00000000-0000-0000-0000-000000000000/rating" \
+                    -H 'Content-Type: application/json' -d '{"rating":1}')" = 404
+          # And a scale is not an opinion this records.
+          test "$(api -X PUT "localhost:8000/api/chats/$rated/messages/00000000-0000-0000-0000-000000000000/rating" \
+                    -H 'Content-Type: application/json' -d '{"rating":5}')" = 422
+          test "$(api -X DELETE "localhost:8000/api/chats/$rated")" = 204
+
+          echo "--- search narrows to one source"
+          test "$(api 'localhost:8000/api/search?q=%D1%82%D0%B5%D1%81%D1%82&source=00000000-0000-0000-0000-000000000000')" = 503
+          test "$(api 'localhost:8000/api/search?q=%D1%82%D0%B5%D1%81%D1%82&source=not-a-uuid')" = 422
+
           echo "--- a question declares whether it may use the web"
           # The body is validated before anything reaches a model, so this
           # costs nothing and still proves the field exists and is a boolean.

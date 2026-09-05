@@ -8,6 +8,7 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     Index,
+    SmallInteger,
     String,
     Text,
     UniqueConstraint,
@@ -144,6 +145,11 @@ class Message(Base):
     content: Mapped[str] = mapped_column(Text, nullable=False)
     # [{document_id, filename, page, snippet}, ...] rendered as clickable sources.
     citations: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, nullable=False, default=list)
+    # What the reader thought of it: 1, -1, or null for no opinion. Only ever
+    # set on an assistant message. The point is not a score to average — it is
+    # that a question somebody marked wrong is a question worth putting in the
+    # eval set, and those are otherwise remembered by nobody.
+    rating: Mapped[int | None] = mapped_column(SmallInteger)
     created_at: Mapped[datetime] = _created_at()
 
     chat: Mapped[Chat] = relationship(back_populates="messages")

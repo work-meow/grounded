@@ -46,7 +46,9 @@ async def _post(settings: Settings, path: str, payload: dict[str, Any]) -> Any:
     raise AssertionError("unreachable")  # pragma: no cover
 
 
-def _tenant_filter(user_id: UUID, document_id: UUID | None = None) -> str:
+def _tenant_filter(
+    user_id: UUID, document_id: UUID | None = None, source_id: UUID | None = None
+) -> str:
     """A JMESPath filter pinned to one user.
 
     Backticks, not quotes. Pathway rewrites the expression before handing it to
@@ -56,13 +58,21 @@ def _tenant_filter(user_id: UUID, document_id: UUID | None = None) -> str:
     `user_id == \\'x\\'` — which does not parse, and takes the whole indexer
     process down with it rather than returning an error.
 
-    Both ids are ``UUID`` instances, so their string form is hex-and-dashes
+    All three ids are ``UUID`` instances, so their string form is hex-and-dashes
     only and carries no character that rewrite could turn into syntax. That
     typing *is* the injection guard — do not loosen it to ``str``.
+
+    Dates are deliberately not here. A number written as `` `1700000000` ``
+    survives the same rewrite as the string ``'1700000000'``, and JMESPath
+    comparing a number to a string evaluates to null — so the filter would
+    quietly match nothing. Recency is applied to the results instead, where it
+    is arithmetic rather than a rewritten expression.
     """
     clause = f"user_id == `{user_id}`"
     if document_id is not None:
         clause += f" && document_id == `{document_id}`"
+    if source_id is not None:
+        clause += f" && source_id == `{source_id}`"
     return clause
 
 
@@ -136,6 +146,10 @@ class Chunk:
     document_id: str | None
     filename: str | None
     page: int | None
+    #: When the far end last changed the document this came from. Zero when the
+    #: metadata did not say, which is treated as "old" — a fragment with no date
+    #: is not evidence of being recent.
+    modified_at: int = 0
 
     @classmethod
     def from_hit(cls, hit: dict[str, Any]) -> "Chunk":
@@ -147,6 +161,7 @@ class Chunk:
             document_id=meta.get("document_id"),
             filename=meta.get("filename"),
             page=_as_int(meta.get("page_number")),
+            modified_at=_as_int(meta.get("modified_at")) or 0,
         )
 
 
@@ -156,13 +171,29 @@ async def retrieve(
     query: str,
     k: int,
     document_id: UUID | None = None,
+    source_id: UUID | None = None,
+    since: int | None = None,
 ) -> list[Chunk]:
+    """The k best fragments for this query, narrowed if asked.
+
+    Document and source are pushed down to the index, so the k that come back
+    are k from inside the narrowing rather than k from everywhere with most of
+    them then dropped. Recency is applied here, for the reason in
+    :func:`_tenant_filter`.
+    """
     hits = await _post(
         settings,
         "/v1/retrieve",
-        {"query": query, "k": k, "metadata_filter": _tenant_filter(user_id, document_id)},
+        {
+            "query": query,
+            "k": k,
+            "metadata_filter": _tenant_filter(user_id, document_id, source_id),
+        },
     )
-    return [Chunk.from_hit(hit) for hit in hits]
+    chunks = [Chunk.from_hit(hit) for hit in hits]
+    if since is None:
+        return chunks
+    return [chunk for chunk in chunks if chunk.modified_at >= since]
 
 
 async def indexed_documents(settings: Settings, user_id: UUID) -> list[IndexedDocument]:

@@ -9,6 +9,7 @@ import asyncio
 import json
 import logging
 import re
+import time
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -196,6 +197,25 @@ class _Citations:
         return [item for item in self.items if item["n"] in cited]
 
 
+def _since(days: int | None) -> int | None:
+    """The instant a "last N days" question reaches back to.
+
+    Nonsense is ignored rather than refused: a model that passes days=0 or a
+    negative meant "no limit", and turning that into an empty result would be a
+    worse answer than searching everything.
+
+    ponytail: applied to the fragments after retrieval, not inside it — see
+    _tenant_filter for why a number cannot go into that expression. Ceiling: a
+    recency question asks for the k best overall and keeps the recent ones,
+    rather than the k best among the recent ones, so on a large corpus it could
+    come back thin. Upgrade path: push it into the filter once a numeric literal
+    survives Pathway's rewriting.
+    """
+    if days is None or days <= 0:
+        return None
+    return int(time.time()) - days * 86_400
+
+
 def _candidates(settings: Settings) -> int:
     """How many fragments to ask the index for.
 
@@ -273,16 +293,21 @@ def _build_tools(
     """
 
     @tool
-    async def search_knowledge(query: str) -> str:
+    async def search_knowledge(query: str, days: int | None = None) -> str:
         """Найти релевантные фрагменты в базе знаний пользователя.
 
         Args:
             query: Поисковый запрос на естественном языке.
+            days: Искать только среди документов, изменённых за последние N
+                дней. Указывай, только если в вопросе есть привязка ко времени
+                («на этой неделе», «вчера», «в этом месяце»); иначе не указывай.
         """
         chunks = await relevance.keep_relevant(
             settings,
             query,
-            await retriever.retrieve(settings, user_id, query, _candidates(settings)),
+            await retriever.retrieve(
+                settings, user_id, query, _candidates(settings), since=_since(days)
+            ),
         )
         return _render(query, chunks, citations, web)
 

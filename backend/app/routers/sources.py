@@ -40,6 +40,7 @@ class DocumentOut(BaseModel):
     size_bytes: int | None
     created_at: datetime
     status: str  # "processing" | "ready"
+    source_id: uuid.UUID
     source_name: str
     #: Whether deleting it here means anything. An upload is ours to remove; a
     #: document from a connected source is removed where it lives, and would
@@ -127,6 +128,7 @@ async def list_documents(
             size_bytes=document.size_bytes,
             created_at=document.created_at,
             status="ready" if str(document.id) in indexed else "processing",
+            source_id=document.source_id,
             source_name=names.get(document.source_id, "Загруженные файлы"),
             removable=True,
             text_layer=document.text_layer,
@@ -147,6 +149,7 @@ async def list_documents(
             # anything for a file this system did not create.
             created_at=datetime.fromtimestamp(found.modified_at, tz=UTC),
             status="ready" if found.ready else "processing",
+            source_id=uuid.UUID(found.source_id),
             source_name=names.get(uuid.UUID(found.source_id), "Подключённый источник"),
             removable=False,
         )
@@ -219,6 +222,7 @@ async def upload(
         size_bytes=document.size_bytes,
         created_at=document.created_at,
         status="processing",
+        source_id=source.id,
         source_name=source.name,
         removable=True,
         text_layer=document.text_layer,

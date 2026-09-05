@@ -22,6 +22,7 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ApiError, api, type SearchHit, type SearchOut } from "@/lib/api";
 import { plural } from "@/lib/plural";
+import { cn } from "@/lib/utils";
 
 /**
  * Long enough that typing a word is one request rather than six, short enough
@@ -36,8 +37,30 @@ export default function SearchPage() {
   const [result, setResult] = useState<SearchOut | null>(null);
   const [failure, setFailure] = useState("");
   const [busy, setBusy] = useState(false);
+  // Which source to look in, or all of them. Kept here rather than in the URL:
+  // it is a way of narrowing what is in front of you, not a place to return to.
+  const [source, setSource] = useState<string>("");
+  const [sources, setSources] = useState<{ id: string; name: string }[]>([]);
 
   const text = query.trim();
+
+  // The list of places to narrow to, built from the documents themselves —
+  // there is no separate list of sources that includes uploads.
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .documents()
+      .then((documents) => {
+        if (cancelled) return;
+        const seen = new Map<string, string>();
+        for (const document of documents) seen.set(document.source_id, document.source_name);
+        setSources([...seen].map(([id, name]) => ({ id, name })));
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     if (!text) return;
@@ -46,7 +69,7 @@ export default function SearchPage() {
     const timer = setTimeout(async () => {
       setBusy(true);
       try {
-        const found = await api.search(text, controller.signal);
+        const found = await api.search(text, source || undefined, controller.signal);
         setResult(found);
         setFailure("");
       } catch (cause) {
@@ -61,7 +84,7 @@ export default function SearchPage() {
       clearTimeout(timer);
       controller.abort();
     };
-  }, [text]);
+  }, [text, source]);
 
   return (
     <div className="flex-1 overflow-y-auto">
@@ -86,6 +109,19 @@ export default function SearchPage() {
           />
         </div>
 
+        {sources.length > 1 && (
+          <div className="flex flex-wrap gap-1.5">
+            <Chip active={!source} onClick={() => setSource("")}>
+              Везде
+            </Chip>
+            {sources.map((one) => (
+              <Chip key={one.id} active={source === one.id} onClick={() => setSource(one.id)}>
+                {one.name}
+              </Chip>
+            ))}
+          </div>
+        )}
+
         {/* Deliberately keyed off the trimmed query rather than off `result`:
             the previous results stay on screen while the next ones are on
             their way, so the list does not blink on every keystroke. */}
@@ -103,6 +139,32 @@ export default function SearchPage() {
         )}
       </div>
     </div>
+  );
+}
+
+function Chip({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={active}
+      className={cn(
+        "rounded-full border px-2.5 py-1 text-xs transition-colors",
+        active
+          ? "border-transparent bg-primary text-primary-foreground"
+          : "text-muted-foreground hover:bg-accent hover:text-foreground",
+      )}
+    >
+      {children}
+    </button>
   );
 }
 

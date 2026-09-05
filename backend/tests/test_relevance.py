@@ -160,3 +160,31 @@ def test_the_cap_keeps_the_order_it_was_given():
         "фрагмент 2",
         "фрагмент 3",
     ]
+
+
+# --- narrowing ----------------------------------------------------------------
+
+
+def test_a_source_is_pushed_down_to_the_index():
+    """So the k that come back are k from inside that source, rather than k from
+    everywhere with most of them then thrown away."""
+    from uuid import UUID
+
+    clause = retriever._tenant_filter(
+        UUID("11111111-1111-1111-1111-111111111111"),
+        source_id=UUID("22222222-2222-2222-2222-222222222222"),
+    )
+
+    assert "source_id == `22222222-2222-2222-2222-222222222222`" in clause
+    assert "user_id ==" in clause, "и никогда вместо изоляции по пользователю"
+
+
+def test_a_date_never_reaches_that_expression():
+    """A number written in backticks survives Pathway's rewriting as a string,
+    and JMESPath comparing a number to a string evaluates to null — the filter
+    would quietly match nothing at all."""
+    from uuid import UUID
+
+    clause = retriever._tenant_filter(UUID("11111111-1111-1111-1111-111111111111"))
+
+    assert "modified_at" not in clause

@@ -87,6 +87,7 @@ export type DocumentOut = {
   size_bytes: number | null;
   created_at: string;
   status: "processing" | "ready";
+  source_id: string;
   source_name: string;
   /** False for a document from a connected source: it is removed where it lives. */
   removable: boolean;
@@ -161,6 +162,8 @@ export type MessageOut = {
   content: string;
   citations: Citation[];
   created_at: string;
+  /** 1, -1 or null. Only ever set on an answer. */
+  rating?: number | null;
 };
 
 // --- endpoints ---------------------------------------------------------------
@@ -198,13 +201,22 @@ export const api = {
   deleteConnector: (id: string) =>
     request<void>(`/api/connectors/${id}`, { method: "DELETE" }),
 
-  /** Fragments straight from the index — no model, no tokens, ~100 ms. */
-  search: (q: string, signal?: AbortSignal) =>
-    request<SearchOut>(`/api/search?q=${encodeURIComponent(q)}`, { signal }),
+  /** Fragments from the index, judged for relevance. Optionally one source. */
+  search: (q: string, source?: string, signal?: AbortSignal) =>
+    request<SearchOut>(
+      `/api/search?q=${encodeURIComponent(q)}${source ? `&source=${source}` : ""}`,
+      { signal },
+    ),
 
   chats: () => request<ChatOut[]>("/api/chats"),
   createChat: () => request<ChatOut>("/api/chats", { method: "POST" }),
   deleteChat: (id: string) => request<void>(`/api/chats/${id}`, { method: "DELETE" }),
+  /** Mark an answer good or bad; 0 takes it back. */
+  rate: (chatId: string, messageId: string, rating: -1 | 0 | 1) =>
+    request<void>(`/api/chats/${chatId}/messages/${messageId}/rating`, {
+      method: "PUT",
+      body: JSON.stringify({ rating }),
+    }),
   /** The end of the chat, or — given a cursor — the page just before it. */
   messages: (chatId: string, before?: string) =>
     request<MessagesPage>(

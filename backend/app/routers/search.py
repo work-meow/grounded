@@ -11,6 +11,7 @@ says where the words are.
 """
 
 import time
+import uuid
 
 import httpx
 from fastapi import APIRouter, HTTPException, Query, status
@@ -71,7 +72,10 @@ async def find(
     settings: SettingsDep,
     q: str = Query(min_length=1, max_length=500),
     limit: int = Query(DEFAULT_LIMIT, ge=1, le=50),
+    source: uuid.UUID | None = None,
+    days: int | None = Query(None, ge=1, le=3650),
 ) -> SearchOut:
+    """Fragments matching a query, narrowed to one source or to recent changes."""
     query = q.strip()
     if not query:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Пустой запрос")

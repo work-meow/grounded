@@ -10,6 +10,8 @@ import {
   Plus,
   SendHorizontal,
   Square,
+  ThumbsDown,
+  ThumbsUp,
   Trash2,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -575,10 +577,13 @@ function Bubble({
   message,
   pending = false,
   step = null,
+  chatId = null,
 }: {
   message: MessageOut;
   pending?: boolean;
   step?: Step | null;
+  /** Null while the answer is still streaming: there is nothing to rate yet. */
+  chatId?: string | null;
 }) {
   const isUser = message.role === "user";
   return (
@@ -610,6 +615,7 @@ function Bubble({
           <div className="flex flex-wrap items-center gap-1.5">
             <Citations citations={message.citations} />
             <CopyButton text={message.content} />
+            {chatId && <Rating chatId={chatId} messageId={message.id} was={message.rating} />}
           </div>
         )}
       </div>
@@ -657,6 +663,64 @@ function CopyButton({ text }: { text: string }) {
       {copied ? <Check className="size-3" /> : <Copy className="size-3" />}
       {copied ? "Скопировано" : "Копировать"}
     </button>
+  );
+}
+
+/**
+ * Was this answer any good.
+ *
+ * Not a score to average — there is nothing here to average. It is that a
+ * question somebody marked wrong is a question worth adding to the evaluation
+ * set, and those are otherwise remembered by nobody.
+ */
+function Rating({
+  chatId,
+  messageId,
+  was,
+}: {
+  chatId: string;
+  messageId: string;
+  was?: number | null;
+}) {
+  const [rating, setRating] = useState(was ?? 0);
+
+  async function set(next: -1 | 1) {
+    // Pressing the same thumb again takes it back, which is what somebody
+    // expects from a control that shows its own state.
+    const value = rating === next ? 0 : next;
+    setRating(value);
+    try {
+      await api.rate(chatId, messageId, value);
+    } catch (cause) {
+      setRating(rating);
+      toast.error(describe(cause));
+    }
+  }
+
+  return (
+    <>
+      {([1, -1] as const).map((value) => {
+        const Icon = value === 1 ? ThumbsUp : ThumbsDown;
+        const active = rating === value;
+        return (
+          <button
+            key={value}
+            type="button"
+            onClick={() => void set(value)}
+            aria-pressed={active}
+            aria-label={value === 1 ? "Хороший ответ" : "Плохой ответ"}
+            className={cn(
+              "inline-flex items-center rounded-full border px-2 py-1 text-xs transition-colors",
+              active
+                ? "border-transparent bg-primary text-primary-foreground"
+                : "bg-background text-muted-foreground hover:bg-accent hover:text-foreground",
+            )}
+          >
+            <Icon className="size-3" />
+          </button>
+        );
+      })}
+    </>
   );
 }
 

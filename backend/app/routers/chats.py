@@ -3,7 +3,7 @@ import logging
 import uuid
 from collections.abc import AsyncIterator
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
@@ -40,6 +40,8 @@ class MessageOut(BaseModel):
     content: str
     citations: list[dict[str, Any]]
     created_at: datetime
+    #: 1, -1 or null. Only ever set on an answer.
+    rating: int | None = None
 
 
 class MessagesOut(BaseModel):
@@ -139,6 +141,7 @@ async def list_messages(
                 content=m.content,
                 citations=m.citations,
                 created_at=m.created_at,
+                rating=m.rating,
             )
             for m in page
         ],
@@ -165,6 +168,44 @@ def _cursor(raw: str) -> tuple[datetime, uuid.UUID]:
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_ENTITY, "Некорректная позиция в истории"
         ) from exc
+
+
+class RatingIn(BaseModel):
+    #: Up, down, or taking it back. Anything else is not an opinion this
+    #: records — a scale invites averaging, and there is nothing here to average.
+    rating: Literal[-1, 0, 1]
+
+
+@router.put("/{chat_id}/messages/{message_id}/rating", status_code=status.HTTP_204_NO_CONTENT)
+async def rate(
+    chat_id: uuid.UUID,
+    message_id: uuid.UUID,
+    body: RatingIn,
+    user_id: UserDep,
+    session: SessionDep,
+) -> None:
+    """Mark an answer good or bad.
+
+    PUT rather than POST: pressing the same thumb twice is the same state, not
+    two opinions, and zero takes it back.
+
+    The value of this is not a score. It is that a question somebody marked
+    wrong is a question worth adding to the eval set, and those are otherwise
+    remembered by nobody.
+    """
+    await _owned_chat(session, user_id, chat_id)
+    message = (
+        await session.execute(
+            select(Message).where(Message.id == message_id, Message.chat_id == chat_id)
+        )
+    ).scalar_one_or_none()
+    if message is None or message.role != "assistant":
+        # A question the reader wrote is not something to rate, and saying so is
+        # more useful than silently storing an opinion nothing will ever read.
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Ответ не найден")
+
+    message.rating = body.rating or None
+    await session.commit()
 
 
 @router.post("/{chat_id}/messages")

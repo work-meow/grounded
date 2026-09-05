@@ -28,7 +28,7 @@ from uuid import UUID
 import httpx
 import sqlalchemy as sa
 
-from app import agent, http, retriever
+from app import agent, http, relevance, retriever
 from app.config import Settings, get_settings
 from app.db import Session
 
@@ -51,10 +51,12 @@ class Outcome:
     found: bool | None = None
     rank: int | None = None
     documents: int = 0
-    #: Fragments that came back, and how many of them belong to the document
-    #: the question is about. The second number is what a reranker moves: recall
-    #: was already whole, the noise around it was not.
+    #: Fragments that reached the model, and how many of them belong to the
+    #: document the question is about. The second number is what relevance
+    #: moves: recall was already whole, the noise around it was not.
     chunks: int = 0
+    #: What the index put forward before anything judged it.
+    candidates: int = 0
     on_target: int = 0
     correct: bool | None = None
     detail: str = ""
@@ -91,11 +93,20 @@ async def only_user() -> UUID:
 
 
 async def search(
-    settings: Settings, user: UUID, question: Question, k: int
+    settings: Settings, user: UUID, question: Question, k: int, *, raw: bool
 ) -> tuple[Outcome, list]:
+    """What the model actually receives, which is the thing worth measuring.
+
+    ``raw`` skips the judging pass, for comparing against the ranked order the
+    way it was before there was one.
+    """
     started = time.perf_counter()
-    chunks = await retriever.retrieve(settings, user, question.ask, k)
+    candidates = await retriever.retrieve(settings, user, question.ask, k)
+    chunks = (
+        candidates if raw else await relevance.keep_relevant(settings, question.ask, candidates)
+    )
     outcome = Outcome(question=question, seconds=time.perf_counter() - started)
+    outcome.candidates = len(candidates)
     outcome.documents = len({chunk.document_id for chunk in chunks})
     outcome.chunks = len(chunks)
 
@@ -189,22 +200,24 @@ async def main() -> int:
     parser = argparse.ArgumentParser(description="Мера качества поиска и ответов")
     parser.add_argument("--user", type=UUID, default=None)
     parser.add_argument("--k", type=int, default=None, help="сколько фрагментов запрашивать")
-    parser.add_argument("--retrieval", action="store_true", help="только поиск, без модели")
+    parser.add_argument("--retrieval", action="store_true", help="только поиск, без ответов")
+    parser.add_argument("--raw", action="store_true", help="без отбора релевантных")
     parser.add_argument("--set", type=Path, default=SET)
     args = parser.parse_args()
 
     settings = get_settings()
     user = args.user or await only_user()
     questions = load(args.set)
-    k = args.k or settings.retrieve_k
+    k = args.k or (settings.rerank_candidates if settings.rerank_enabled else settings.retrieve_k)
 
     async with httpx.AsyncClient() as client:
         http.set_client(client)
         outcomes = []
         for question in questions:
-            outcome, _ = await search(settings, user, question, k)
+            outcome, _ = await search(settings, user, question, k, raw=args.raw)
             outcomes.append(outcome)
-        found, of_found = report(f"поиск, k={k}", outcomes, key="found")
+        title = f"поиск, кандидатов {k}" + (", без отбора" if args.raw else "")
+        found, of_found = report(title, outcomes, key="found")
         noise(outcomes)
 
         answered = of_answered = 0

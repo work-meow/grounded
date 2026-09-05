@@ -23,7 +23,7 @@ from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 from langchain_core.tools import BaseTool, tool
 from langchain_openrouter import ChatOpenRouter
 
-from app import retriever, websearch
+from app import relevance, retriever, websearch
 from app.config import Settings
 from app.models import Message
 
@@ -196,6 +196,15 @@ class _Citations:
         return [item for item in self.items if item["n"] in cited]
 
 
+def _candidates(settings: Settings) -> int:
+    """How many fragments to ask the index for.
+
+    More when something is going to judge them, because judging twenty costs the
+    same one call as judging eight and gives it more to find the answer in.
+    """
+    return settings.rerank_candidates if settings.rerank_enabled else settings.retrieve_k
+
+
 def _render(
     query: str, chunks: list[retriever.Chunk], citations: _Citations, web: bool = False
 ) -> str:
@@ -210,12 +219,14 @@ def _render(
     what turns one search into a loop worth having.
     """
     if not chunks:
-        return f"По запросу «{query}» ничего не найдено. {_next_move(web)}"
+        # Not "the index returned nothing" — it never does. Something read the
+        # candidates and found none of them about this, which is a far better
+        # thing to tell the model than eight paragraphs about something else.
+        return f"По запросу «{query}» подходящих фрагментов нет. {_next_move(web)}"
     lines = [
-        f"Лучшие {len(chunks)} фрагмент(ов) индекса по запросу «{query}». "
-        "Это ранжированная выдача, а не совпадения: среди них может не быть "
-        "подходящих. Если ни один не отвечает на вопрос — молча вызови поиск "
-        f"ещё раз с другой формулировкой. {_next_move(web)}"
+        f"Подходящие фрагменты по запросу «{query}» — {len(chunks)}. "
+        "Если ни один всё же не отвечает на вопрос — молча вызови поиск ещё раз "
+        f"с другой формулировкой. {_next_move(web)}"
     ]
     for chunk in chunks:
         number = citations.add(chunk)
@@ -268,7 +279,11 @@ def _build_tools(
         Args:
             query: Поисковый запрос на естественном языке.
         """
-        chunks = await retriever.retrieve(settings, user_id, query, settings.retrieve_k)
+        chunks = await relevance.keep_relevant(
+            settings,
+            query,
+            await retriever.retrieve(settings, user_id, query, _candidates(settings)),
+        )
         return _render(query, chunks, citations, web)
 
     @tool
@@ -311,8 +326,12 @@ def _build_tools(
         # so somebody else's document returns nothing rather than being refused.
         # Parsing to UUID first is the guard that matters — it is what keeps the
         # id out of the filter expression as anything but hex and dashes.
-        chunks = await retriever.retrieve(
-            settings, user_id, query, settings.retrieve_k, document_id=target
+        chunks = await relevance.keep_relevant(
+            settings,
+            query,
+            await retriever.retrieve(
+                settings, user_id, query, _candidates(settings), document_id=target
+            ),
         )
         return _render(query, chunks, citations, web)
 

@@ -57,7 +57,7 @@ def test_pageless_document_renders_without_a_page_suffix():
 
 def test_empty_result_tells_the_model_to_retry_rather_than_inventing():
     citations = _Citations()
-    assert "ничего не найдено" in _render("нет такого", [], citations)
+    assert "подходящих фрагментов нет" in _render("нет такого", [], citations)
     assert citations.items == []
 
 

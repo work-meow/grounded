@@ -69,7 +69,7 @@ export default function SearchPage() {
         <div>
           <h1 className="text-lg font-semibold">Поиск</h1>
           <p className="text-sm text-muted-foreground">
-            По фрагментам документов, без модели — мгновенно и бесплатно
+            Показывает, где это написано: фрагменты документов, без развёрнутого ответа
           </p>
         </div>
 
@@ -123,9 +123,16 @@ function Results({ result, busy }: { result: SearchOut; busy: boolean }) {
   if (result.hits.length === 0) {
     return (
       <div className="rounded-lg border border-dashed p-6 text-center">
-        <p className="text-sm font-medium">Ничего не нашлось</p>
+        <p className="text-sm font-medium">
+          {result.found > 0 ? "Ничего подходящего" : "Ничего не нашлось"}
+        </p>
         <p className="mt-1 text-sm text-muted-foreground">
-          Попробуйте другое слово — или спросите в чате, он умеет переформулировать.
+          {result.found > 0
+            ? // Not the same as an empty corpus, and the difference is worth
+              // saying: the index did find things, none of them about this.
+              `Индекс предложил ${result.found}, но ни один фрагмент не про это.`
+            : "Попробуйте другое слово"}{" "}
+          — или спросите в чате, он умеет переформулировать.
         </p>
       </div>
     );
@@ -137,7 +144,8 @@ function Results({ result, busy }: { result: SearchOut; busy: boolean }) {
         aria-live="polite"
         className={`text-xs text-muted-foreground transition-opacity ${busy ? "opacity-50" : ""}`}
       >
-        {plural(result.hits.length, "фрагмент", "фрагмента", "фрагментов")} · {result.took_ms} мс
+        {plural(result.hits.length, "фрагмент", "фрагмента", "фрагментов")} из {result.found}{" "}
+        найденных · {result.took_ms} мс
       </p>
       {result.hits.map((hit, index) => (
         // The index is part of the key because the same page of the same

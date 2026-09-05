@@ -140,7 +140,9 @@ export type SearchHit = {
 
 export type SearchOut = {
   hits: SearchHit[];
-  /** The whole lookup, embedding included. Worth showing: it is the point. */
+  /** How many the index put forward before relevance judged them. */
+  found: number;
+  /** The whole lookup, embedding and judging included. */
   took_ms: number;
 };
 

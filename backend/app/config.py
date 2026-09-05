@@ -89,6 +89,26 @@ class Settings(BaseSettings):
     # default and a wrong one for most people; set it to where you are.
     timezone: str = "UTC"
 
+    # --- relevance ------------------------------------------------------------
+    # The index answers every query with its k best fragments whether or not any
+    # of them is about the question. A second pass reads the candidates and says
+    # which ones bear on it — measured on this deployment at 0.3–0.7 s and about
+    # $0.00017 a call, against a baseline where three quarters of what the model
+    # read was about something else.
+    rerank_enabled: bool = True
+    rerank_model: str = "google/gemini-2.5-flash-lite"
+    # Retrieved before judging. More candidates cost nothing extra to judge —
+    # it is one call either way — and give the judge more to find the answer in.
+    rerank_candidates: int = 20
+    # Kept after. A ceiling, not a target: the honest answer is often fewer, and
+    # sometimes none.
+    rerank_keep: int = 6
+    rerank_timeout_s: float = 20.0
+    # Fragments from any one document on the search page. For browsing only:
+    # answering a question about a long document legitimately takes several
+    # fragments of it, and a list of places to look wants the opposite.
+    max_chunks_per_document: int = 2
+
     # --- web search (only when the user turns it on for a message) ------------
     # Called directly rather than through LangChain: the web plugin is an
     # OpenRouter extension to the request body, not something a chat model

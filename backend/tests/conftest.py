@@ -10,3 +10,7 @@ import os
 os.environ.setdefault("JWT_SECRET", "test-secret-that-is-at-least-32-characters")
 os.environ.setdefault("OPENROUTER_API_KEY", "test")
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://rag:rag@localhost:5432/rag")
+# Off by default so that a unit test exercises the deterministic path and makes
+# no outbound call. The reranker has its own tests, with the judge stubbed, and
+# the tests that care turn it back on.
+os.environ.setdefault("RERANK_ENABLED", "false")

@@ -100,28 +100,59 @@ async def test_a_tool_call_is_announced_before_anything_is_written(monkeypatch):
         monkeypatch,
         [
             _Chunk(tool_call_chunks=[{"name": "search_knowledge", "args": "", "index": 0}]),
-            _Chunk(tool_call_chunks=[{"name": None, "args": '{"query"', "index": 0}]),
             _Chunk(content="сорок"),
         ],
     )
 
-    assert events[0] == ("step", "search_knowledge")
+    assert events[0] == ("step", {"tool": "search_knowledge", "query": ""})
     assert events[1] == ("token", "сорок")
 
 
-async def test_one_call_is_one_announcement(monkeypatch):
-    """Only the first chunk of a call carries a name; the rest are argument
-    fragments. Announcing those too would flicker the label on every token."""
+async def test_the_query_follows_as_soon_as_the_arguments_parse(monkeypatch):
+    """ "Ищу в базе знаний" says something; "Ищу: срок уведомления" says what.
+    The arguments arrive as JSON fragments, so the query is only knowable once
+    the last one lands — still well before the tool returns."""
     events = await _events(
         monkeypatch,
         [
             _Chunk(tool_call_chunks=[{"name": "search_knowledge", "index": 0}]),
-            _Chunk(tool_call_chunks=[{"name": None, "args": "que", "index": 0}]),
-            _Chunk(tool_call_chunks=[{"name": None, "args": "ry", "index": 0}]),
+            _Chunk(tool_call_chunks=[{"name": None, "args": '{"query": "срок ', "index": 0}]),
+            _Chunk(tool_call_chunks=[{"name": None, "args": 'уведомления"}', "index": 0}]),
         ],
     )
 
-    assert [event for event in events if event[0] == "step"] == [("step", "search_knowledge")]
+    assert [payload for kind, payload in events if kind == "step"] == [
+        {"tool": "search_knowledge", "query": ""},
+        {"tool": "search_knowledge", "query": "срок уведомления"},
+    ]
+
+
+async def test_a_half_streamed_query_is_never_shown(monkeypatch):
+    """JSON is only valid once it is balanced, which is what keeps a fragment
+    from reaching the screen as if it were the whole query."""
+    events = await _events(
+        monkeypatch,
+        [
+            _Chunk(tool_call_chunks=[{"name": "search_knowledge", "index": 0}]),
+            _Chunk(tool_call_chunks=[{"name": None, "args": '{"query": "сро', "index": 0}]),
+        ],
+    )
+
+    assert [payload["query"] for kind, payload in events if kind == "step"] == [""]
+
+
+async def test_a_tool_without_a_query_announces_only_itself(monkeypatch):
+    events = await _events(
+        monkeypatch,
+        [
+            _Chunk(tool_call_chunks=[{"name": "list_sources", "index": 0}]),
+            _Chunk(tool_call_chunks=[{"name": None, "args": "{}", "index": 0}]),
+        ],
+    )
+
+    assert [payload for kind, payload in events if kind == "step"] == [
+        {"tool": "list_sources", "query": ""}
+    ]
 
 
 async def test_two_calls_are_two_announcements(monkeypatch):
@@ -133,7 +164,7 @@ async def test_two_calls_are_two_announcements(monkeypatch):
         ],
     )
 
-    assert [payload for kind, payload in events if kind == "step"] == [
+    assert [payload["tool"] for kind, payload in events if kind == "step"] == [
         "search_knowledge",
         "read_document",
     ]

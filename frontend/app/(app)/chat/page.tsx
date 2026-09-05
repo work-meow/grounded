@@ -8,7 +8,15 @@ import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
-import { ApiError, api, ask, type ChatOut, type Citation, type MessageOut } from "@/lib/api";
+import {
+  ApiError,
+  api,
+  ask,
+  type ChatOut,
+  type Citation,
+  type MessageOut,
+  type Step,
+} from "@/lib/api";
 import { cn } from "@/lib/utils";
 
 /**
@@ -45,8 +53,8 @@ export default function ChatPage() {
     chatId: string;
     text: string;
     citations: Citation[];
-    /** The tool the agent reached for last. Empty before it has reached. */
-    step: string;
+    /** The tool the agent reached for last. Null before it has reached. */
+    step: Step | null;
   } | null>(null);
   const [loading, setLoading] = useState(true);
   // Where the chat continues above what is on screen, and whether that page is
@@ -176,13 +184,13 @@ export default function ChatPage() {
 
     setDraft("");
     setMessages((current) => [...current, localMessage("user", question)]);
-    setStreaming({ chatId: activeId, text: "", citations: [], step: "" });
+    setStreaming({ chatId: activeId, text: "", citations: [], step: null });
 
     // The answer is accumulated here rather than read back out of state: a
     // setState updater must stay pure, and React calls it twice in StrictMode.
     let text = "";
     let citations: Citation[] = [];
-    let step = "";
+    let step: Step | null = null;
     let failed = false;
 
     const controller = new AbortController();
@@ -193,8 +201,8 @@ export default function ChatPage() {
         activeId,
         question,
         {
-          onStep: (tool) => {
-            step = tool;
+          onStep: (reached) => {
+            step = reached;
             setStreaming({ chatId: activeId, text, citations, step });
           },
           onToken: (chunk) => {
@@ -490,11 +498,11 @@ function EmptyState() {
 function Bubble({
   message,
   pending = false,
-  step = "",
+  step = null,
 }: {
   message: MessageOut;
   pending?: boolean;
-  step?: string;
+  step?: Step | null;
 }) {
   const isUser = message.role === "user";
   return (
@@ -509,7 +517,12 @@ function Bubble({
           {pending ? (
             <span className="flex items-center gap-2 text-muted-foreground">
               <Loader2 className="size-4 shrink-0 animate-spin" />
-              {STEP_LABEL[step] ?? "Думаю"}…
+              {/* Truncated by the box rather than by character count: a wide
+                  screen shows the whole query, a narrow one shows what fits. */}
+              <span className="min-w-0 truncate">
+                {step ? (STEP_LABEL[step.tool] ?? "Работаю") : "Думаю"}
+                {step?.query ? `: ${step.query}` : ""}…
+              </span>
             </span>
           ) : (
             message.content

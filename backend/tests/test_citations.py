@@ -25,12 +25,12 @@ def chunk(document_id: str, page: int | None, text: str = "текст") -> Chunk
 def test_numbering_is_stable_across_repeated_tool_calls():
     citations = _Citations()
 
-    first = _render([chunk("a", 1), chunk("b", 2)], citations)
+    first = _render("запрос", [chunk("a", 1), chunk("b", 2)], citations)
     assert "[1] (a.pdf, стр. 1)" in first
     assert "[2] (b.pdf, стр. 2)" in first
 
     # A second search that re-finds "a" must reuse [1], not renumber it.
-    second = _render([chunk("b", 2), chunk("a", 1), chunk("c", 3)], citations)
+    second = _render("запрос", [chunk("b", 2), chunk("a", 1), chunk("c", 3)], citations)
     assert "[1] (a.pdf, стр. 1)" in second
     assert "[2] (b.pdf, стр. 2)" in second
     assert "[3] (c.pdf, стр. 3)" in second
@@ -41,7 +41,7 @@ def test_numbering_is_stable_across_repeated_tool_calls():
 
 def test_same_document_different_pages_are_separate_citations():
     citations = _Citations()
-    _render([chunk("a", 1), chunk("a", 7)], citations)
+    _render("запрос", [chunk("a", 1), chunk("a", 7)], citations)
 
     assert len(citations.items) == 2
     assert {item["page"] for item in citations.items} == {1, 7}
@@ -49,7 +49,7 @@ def test_same_document_different_pages_are_separate_citations():
 
 def test_pageless_document_renders_without_a_page_suffix():
     citations = _Citations()
-    rendered = _render([chunk("a", None)], citations)
+    rendered = _render("запрос", [chunk("a", None)], citations)
 
     assert "[1] (a.pdf)" in rendered
     assert citations.items[0]["page"] is None
@@ -57,13 +57,13 @@ def test_pageless_document_renders_without_a_page_suffix():
 
 def test_empty_result_tells_the_model_to_retry_rather_than_inventing():
     citations = _Citations()
-    assert "Ничего не найдено" in _render([], citations)
+    assert "ничего не найдено" in _render("нет такого", [], citations)
     assert citations.items == []
 
 
 def test_snippet_is_bounded():
     citations = _Citations()
-    _render([chunk("a", 1, "щ" * 5000)], citations)
+    _render("запрос", [chunk("a", 1, "щ" * 5000)], citations)
 
     assert len(citations.items[0]["snippet"]) == 300
 
@@ -71,7 +71,7 @@ def test_snippet_is_bounded():
 def test_only_the_sources_the_answer_cites_are_returned():
     """Eight chunks go to the model; the two it leans on go to the UI."""
     citations = _Citations()
-    _render([chunk("a", 1), chunk("b", 2), chunk("c", 3)], citations)
+    _render("запрос", [chunk("a", 1), chunk("b", 2), chunk("c", 3)], citations)
 
     kept = citations.referenced_in("По договору [1], и отдельно в приложении [3].")
 
@@ -80,7 +80,7 @@ def test_only_the_sources_the_answer_cites_are_returned():
 
 def test_an_answer_without_markers_claims_no_sources():
     citations = _Citations()
-    _render([chunk("a", 1)], citations)
+    _render("запрос", [chunk("a", 1)], citations)
 
     assert citations.referenced_in("В базе ничего не нашлось.") == []
 
@@ -88,6 +88,6 @@ def test_an_answer_without_markers_claims_no_sources():
 def test_a_marker_the_tools_never_issued_is_ignored():
     """The model can write [9] out of nowhere; there is nothing to link it to."""
     citations = _Citations()
-    _render([chunk("a", 1)], citations)
+    _render("запрос", [chunk("a", 1)], citations)
 
     assert [item["n"] for item in citations.referenced_in("Точно так [9] и [1].")] == [1]

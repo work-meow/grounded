@@ -6,6 +6,7 @@ citation bookkeeping that turns retrieved chunks into clickable sources.
 """
 
 import asyncio
+import json
 import logging
 import re
 from collections.abc import AsyncIterator
@@ -33,7 +34,10 @@ SYSTEM_PROMPT = """\
 
 Правила:
 - Отвечай на основании фрагментов, полученных через search_knowledge. Не выдумывай.
-- Если первый поиск не дал ответа, переформулируй запрос и попробуй ещё раз.
+- Индекс всегда возвращает несколько лучших фрагментов, даже когда подходящих
+  нет. Если ни один не отвечает на вопрос — сделай ещё один поиск с другой
+  формулировкой (синонимы, точные термины, без вопросительных слов), и только
+  потом делай вывод.
 - Если в базе ничего нет, прямо скажи об этом и не додумывай.
 - Ссылайся на источники в тексте как [1], [2] — их нумерация совпадает с той,
   что возвращают инструменты.
@@ -95,6 +99,10 @@ def system_prompt(settings: Settings) -> str:
     return f"{SYSTEM_PROMPT}\n{today} Считай «сегодня», «вчера», «на этой неделе» от этой даты.\n"
 
 
+#: How much of a source is kept for the chip the reader hovers. Enough to
+#: recognise the fragment, far short of reproducing the document.
+SNIPPET_CHARS = 300
+
 # The [1] / [12] markers the model is told to write, as they appear in the answer.
 _MARKER_RE = re.compile(r"\[(\d{1,3})\]")
 
@@ -107,17 +115,25 @@ class _Citations:
     _numbers: dict[tuple[str | None, int | None], int] = field(default_factory=dict)
 
     def add(self, chunk: retriever.Chunk) -> int:
-        """Register a chunk and return its stable citation number."""
-        key = (chunk.document_id, chunk.page)
+        """Register a fragment from the knowledge base."""
+        return self._number(
+            (chunk.document_id, chunk.page),
+            document_id=chunk.document_id,
+            filename=chunk.filename,
+            page=chunk.page,
+            snippet=chunk.text[:SNIPPET_CHARS],
+        )
+
+    def _number(self, key: tuple[str | None, int | None], **item: Any) -> int:
         if key not in self._numbers:
             self._numbers[key] = len(self.items) + 1
             self.items.append(
                 {
                     "n": self._numbers[key],
-                    "document_id": chunk.document_id,
-                    "filename": chunk.filename,
-                    "page": chunk.page,
-                    "snippet": chunk.text[:300],
+                    "document_id": None,
+                    "filename": None,
+                    "page": None,
+                    **item,
                 }
             )
         return self._numbers[key]
@@ -140,10 +156,25 @@ class _Citations:
         return [item for item in self.items if item["n"] in cited]
 
 
-def _render(chunks: list[retriever.Chunk], citations: _Citations) -> str:
+def _render(query: str, chunks: list[retriever.Chunk], citations: _Citations) -> str:
+    """Fragments as the model sees them, with what they are said plainly.
+
+    The header is not decoration. The index is a ranked retriever: it returns
+    its k best fragments for any query at all, and measured on the deployment,
+    a question about something the base has never heard of comes back with
+    eight confident-looking fragments about something else. A model given those
+    with no framing reads them as "the matches" and concludes the base has
+    nothing — on the first try, every time. Saying what they actually are is
+    what turns one search into a loop worth having.
+    """
     if not chunks:
-        return "Ничего не найдено. Попробуй другую формулировку запроса."
-    lines = []
+        return f"По запросу «{query}» ничего не найдено. Попробуй другую формулировку."
+    lines = [
+        f"Лучшие {len(chunks)} фрагмент(ов) индекса по запросу «{query}». "
+        "Это ранжированная выдача, а не совпадения: среди них может не быть "
+        "подходящих. Если ни один не отвечает на вопрос — поищи ещё раз с "
+        "другой формулировкой, прежде чем делать вывод."
+    ]
     for chunk in chunks:
         number = citations.add(chunk)
         where = chunk.filename or "документ"
@@ -169,7 +200,7 @@ def _build_tools(settings: Settings, user_id: UUID, citations: _Citations) -> li
             query: Поисковый запрос на естественном языке.
         """
         chunks = await retriever.retrieve(settings, user_id, query, settings.retrieve_k)
-        return _render(chunks, citations)
+        return _render(query, chunks, citations)
 
     @tool
     async def list_sources() -> str:
@@ -214,7 +245,7 @@ def _build_tools(settings: Settings, user_id: UUID, citations: _Citations) -> li
         chunks = await retriever.retrieve(
             settings, user_id, query, settings.retrieve_k, document_id=target
         )
-        return _render(chunks, citations)
+        return _render(query, chunks, citations)
 
     return [search_knowledge, list_sources, read_document]
 
@@ -255,6 +286,55 @@ def _text_of(chunk: Any) -> str:
     )
 
 
+@dataclass
+class _Call:
+    """One tool call, as it arrives in pieces."""
+
+    tool: str
+    args: str = ""
+    #: Set once the arguments have parsed and the query has been announced.
+    settled: bool = False
+
+
+def _query_of(args: str) -> str | None:
+    """The `query` argument, once enough of it has streamed in to parse.
+
+    Arguments arrive as JSON fragments, and JSON is only valid once it is
+    balanced — so this returns None for every fragment until the last one, and
+    there is no half-parsed query to guard against.
+    """
+    try:
+        parsed = json.loads(args)
+    except ValueError:
+        return None
+    query = parsed.get("query") if isinstance(parsed, dict) else None
+    return query.strip() if isinstance(query, str) and query.strip() else None
+
+
+def _limits(settings: Settings) -> list[Any]:
+    """Ceilings on one turn.
+
+    Per tool as well as overall, and that is what makes the retry loop safe to
+    ask for: the model is told to search again with different wording when the
+    fragments do not answer, and without a bound on that particular tool the
+    instruction is an invitation to spend the afternoon looking.
+    """
+    limits: list[Any] = [
+        ToolCallLimitMiddleware(
+            tool_name="search_knowledge",
+            run_limit=settings.max_knowledge_searches_per_run,
+            exit_behavior="continue",
+        )
+    ]
+    limits.append(
+        ToolCallLimitMiddleware(run_limit=settings.max_tool_calls_per_run, exit_behavior="continue")
+    )
+    limits.append(
+        ModelCallLimitMiddleware(run_limit=settings.max_model_calls_per_run, exit_behavior="end")
+    )
+    return limits
+
+
 async def answer(
     settings: Settings,
     user_id: UUID,
@@ -263,8 +343,8 @@ async def answer(
 ) -> AsyncIterator[tuple[str, Any]]:
     """Stream the turn as it happens, ending with one ``("citations", list)``.
 
-    Three kinds of event. ``("step", tool_name)`` when the model decides to call
-    a tool, ``("token", str)`` for the answer as it is written, and the
+    Three kinds of event. ``("step", {"tool", "query"})`` when the model decides
+    to call a tool, ``("token", str)`` for the answer as it is written, and the
     citations at the end.
 
     The agent is compiled per request so that its tools can close over the
@@ -280,19 +360,14 @@ async def answer(
         ),
         tools=_build_tools(settings, user_id, citations),
         system_prompt=system_prompt(settings),
-        middleware=[
-            ToolCallLimitMiddleware(
-                run_limit=settings.max_tool_calls_per_run, exit_behavior="continue"
-            ),
-            ModelCallLimitMiddleware(
-                run_limit=settings.max_model_calls_per_run, exit_behavior="end"
-            ),
-        ],
+        middleware=_limits(settings),
     )
 
     inputs = {"messages": [*_history(history), HumanMessage(question)]}
     # Kept so the citation markers can be read back out of the finished answer.
     parts: list[str] = []
+    # Tool calls being assembled, by their position in the message.
+    calls: dict[int, _Call] = {}
 
     # The whole turn, not one request: a provider that accepts the connection
     # and then says nothing would otherwise hold the SSE stream open behind it
@@ -303,14 +378,24 @@ async def answer(
         async for chunk, meta in agent.astream(inputs, stream_mode="messages"):
             if meta.get("langgraph_node") != "model":
                 continue
-            # The name arrives in the first chunk of each tool call, before its
+            # A tool call arrives in pieces: the first chunk carries its name,
+            # the rest carry fragments of its JSON arguments. The name goes out
+            # at once — it is the earliest honest thing to show, before the
             # arguments have finished streaming and well before the tool runs —
-            # so this is the earliest moment anything can be said. Only that
-            # first chunk carries a name, which is what keeps one call to one
-            # event. Verified against the live provider.
-            for call in getattr(chunk, "tool_call_chunks", None) or []:
-                if name := call.get("name"):
-                    yield "step", name
+            # and the query follows a few hundred milliseconds later, as soon as
+            # the fragments parse. Verified against the live provider.
+            for part in getattr(chunk, "tool_call_chunks", None) or []:
+                index = part.get("index") or 0
+                if name := part.get("name"):
+                    calls[index] = _Call(tool=name)
+                    yield "step", {"tool": name, "query": ""}
+                call = calls.get(index)
+                if call is None or call.settled:
+                    continue
+                call.args += part.get("args") or ""
+                if (query := _query_of(call.args)) is not None:
+                    call.settled = True
+                    yield "step", {"tool": call.tool, "query": query}
             if text := _text_of(chunk):
                 parts.append(text)
                 yield "token", text

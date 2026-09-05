@@ -73,8 +73,12 @@ class Settings(BaseSettings):
     # enough for a reasoning model on a long question; short enough that a
     # dead upstream surfaces as an error rather than a page that never ends.
     agent_timeout_s: float = 120.0
-    # Hard ceiling so a confused agent cannot run away with the bill.
-    max_tool_calls_per_run: int = 5
+    # Hard ceilings so a confused agent cannot run away with the bill. The
+    # per-tool ones are what make a retry loop safe to encourage: the agent is
+    # told to search again with different wording when the first fragments do
+    # not answer, and these are what stop that being an invitation to loop.
+    max_knowledge_searches_per_run: int = 3
+    max_tool_calls_per_run: int = 6
     max_model_calls_per_run: int = 8
     # How much chat history is replayed into the agent each turn.
     history_window: int = 20

@@ -94,6 +94,10 @@ class _Rows:
 
     def __init__(self, rows):
         self._rows = rows
+        self.committed = False
+
+    async def commit(self):
+        self.committed = True
 
     async def execute(self, _statement):
         return self
@@ -256,3 +260,15 @@ async def test_a_config_this_key_cannot_open_is_skipped_rather_than_fatal():
     await connectors.backfill_fingerprints(Sealer(KEY), _Rows([row]), USER)
 
     assert row.fingerprint is None
+
+
+async def test_the_backfill_is_kept_even_when_the_add_it_ran_for_is_refused():
+    """It usually runs *because* a duplicate is about to be refused. Leaving it
+    to the caller's commit would roll it back on exactly that path, and the
+    unique index would go on having nothing to enforce."""
+    row = _row({"token": "ntn_a"})
+    session = _Rows([row])
+
+    await connectors.backfill_fingerprints(Sealer(KEY), session, USER)
+
+    assert session.committed, "the fill has to outlive the request that triggered it"

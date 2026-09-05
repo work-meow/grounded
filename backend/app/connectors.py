@@ -100,6 +100,7 @@ async def backfill_fingerprints(sealer: Sealer, session: AsyncSession, user_id: 
         .all()
     )
     taken = {row.fingerprint for row in rows if row.fingerprint}
+    filled = False
     for row in rows:
         if row.fingerprint or row.kind not in _KNOWN_KINDS:
             continue
@@ -114,6 +115,15 @@ async def backfill_fingerprints(sealer: Sealer, session: AsyncSession, user_id: 
             continue
         taken.add(finger)
         row.fingerprint = finger
+        filled = True
+
+    if filled:
+        # Committed here rather than left to the caller's. This is a derived
+        # column catching up, not part of the change being made — and the change
+        # being made is quite likely to be refused *because* of what was just
+        # filled in, which would roll the fill back and leave the unique index
+        # with nothing to enforce.
+        await session.commit()
 
 
 async def duplicate_name(session: AsyncSession, user_id: UUID, finger: str) -> str | None:

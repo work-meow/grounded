@@ -58,7 +58,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
       <header className="flex h-14 shrink-0 items-center justify-between border-b px-4">
         <Link href="/chat" className="flex items-center gap-2 font-semibold">
           <Sparkles className="size-5 text-primary" />
-          База знаний
+          grounded
         </Link>
         <div className="flex items-center gap-3">
           {userId ? (

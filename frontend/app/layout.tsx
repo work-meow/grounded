@@ -14,8 +14,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "База знаний",
-  description: "Личная RAG-система по вашим документам",
+  title: "grounded",
+  description: "Личная база знаний: ответы только по вашим документам, со ссылками",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {

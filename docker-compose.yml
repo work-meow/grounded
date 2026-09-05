@@ -82,7 +82,7 @@ services:
 
   indexer:
     <<: *logging
-    image: ${IMAGE_PREFIX:-ghcr.io/monitizationrsya/rag}-indexer:${IMAGE_TAG:-latest}
+    image: ${IMAGE_PREFIX:-ghcr.io/work-meow/grounded}-indexer:${IMAGE_TAG:-latest}
     pull_policy: always
     # Also how a new connected source takes effect: a Pathway graph is fixed
     # once built, so the indexer exits (75) when the manifest changes and comes
@@ -124,7 +124,7 @@ services:
 
   backend:
     <<: *logging
-    image: ${IMAGE_PREFIX:-ghcr.io/monitizationrsya/rag}-backend:${IMAGE_TAG:-latest}
+    image: ${IMAGE_PREFIX:-ghcr.io/work-meow/grounded}-backend:${IMAGE_TAG:-latest}
     pull_policy: always
     restart: unless-stopped
     depends_on:
@@ -179,7 +179,7 @@ services:
     <<: *logging
     # NEXT_PUBLIC_API_URL is baked in at build time as "" — the UI calls /api on
     # its own origin. See .github/workflows/build.yml.
-    image: ${IMAGE_PREFIX:-ghcr.io/monitizationrsya/rag}-frontend:${IMAGE_TAG:-latest}
+    image: ${IMAGE_PREFIX:-ghcr.io/work-meow/grounded}-frontend:${IMAGE_TAG:-latest}
     pull_policy: always
     restart: unless-stopped
     networks: [rag, dokploy-network]

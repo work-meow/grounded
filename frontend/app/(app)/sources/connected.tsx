@@ -36,6 +36,7 @@ import {
   type ConnectorsOut,
   type SourceStatus,
 } from "@/lib/api";
+import { plural } from "@/lib/plural";
 import { cn } from "@/lib/utils";
 
 type Presentation = {
@@ -340,7 +341,10 @@ function ConnectedCard({
 function report(source: ConnectorOut): string {
   if (source.status === "error") return source.problem || "источник недоступен";
   if (source.status === "unknown") return "ожидает первой проверки";
-  const seen = source.documents === null ? "" : ` · ${files(source.documents)}`;
+  const seen =
+    source.documents === null
+      ? ""
+      : ` · ${plural(source.documents, "файл", "файла", "файлов")}`;
   return `проверен ${ago(source.checked_at)}${seen}`;
 }
 
@@ -351,15 +355,6 @@ function ago(iso: string | null): string {
   if (minutes < 60) return `${minutes} мин назад`;
   const hours = Math.round(minutes / 60);
   return hours < 24 ? `${hours} ч назад` : `${Math.round(hours / 24)} дн назад`;
-}
-
-/** What the last listing saw. Zero is the useful number here, not a blank. */
-function files(count: number): string {
-  const tail = count % 10;
-  const teens = count % 100;
-  if (tail === 1 && teens !== 11) return `${count} файл`;
-  if (tail >= 2 && tail <= 4 && (teens < 12 || teens > 14)) return `${count} файла`;
-  return `${count} файлов`;
 }
 
 function AddForm({

@@ -31,7 +31,12 @@ async function request<T>(
   const response = await fetch(`${BASE}${path}`, {
     ...init,
     credentials: "include",
-    signal: init.signal ?? AbortSignal.timeout(timeoutMs),
+    // Both, when a caller brings its own: a request that can be cancelled
+    // should still have a deadline. Passing the caller's signal straight
+    // through would silently drop the one every other call gets.
+    signal: init.signal
+      ? AbortSignal.any([init.signal, AbortSignal.timeout(timeoutMs)])
+      : AbortSignal.timeout(timeoutMs),
     headers: {
       // FormData must set its own Content-Type: the boundary is part of it.
       ...(init.body instanceof FormData ? {} : { "Content-Type": "application/json" }),
@@ -109,6 +114,22 @@ export type ConnectorsOut = {
   required_fields: Record<ConnectorKind, string[]>;
 };
 
+/** One run of a search snippet. `hit` marks the words the query matched. */
+export type SearchPiece = { text: string; hit: boolean };
+
+export type SearchHit = {
+  document_id: string | null;
+  filename: string | null;
+  page: number | null;
+  snippet: SearchPiece[];
+};
+
+export type SearchOut = {
+  hits: SearchHit[];
+  /** How long the index took. Worth showing: it is the point of this page. */
+  took_ms: number;
+};
+
 export type ChatOut = { id: string; title: string; created_at: string };
 
 /** One page of a chat, oldest first. */
@@ -160,6 +181,10 @@ export const api = {
     }),
   deleteConnector: (id: string) =>
     request<void>(`/api/connectors/${id}`, { method: "DELETE" }),
+
+  /** Fragments straight from the index — no model, no tokens, ~100 ms. */
+  search: (q: string, signal?: AbortSignal) =>
+    request<SearchOut>(`/api/search?q=${encodeURIComponent(q)}`, { signal }),
 
   chats: () => request<ChatOut[]>("/api/chats"),
   createChat: () => request<ChatOut>("/api/chats", { method: "POST" }),

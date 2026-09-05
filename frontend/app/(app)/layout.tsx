@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { FolderOpen, LogOut, MessagesSquare, Sparkles } from "lucide-react";
+import { FolderOpen, LogOut, MessagesSquare, Search, Sparkles } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -13,6 +13,7 @@ import { cn } from "@/lib/utils";
 
 const NAV = [
   { href: "/chat", label: "Чат", icon: MessagesSquare },
+  { href: "/search", label: "Поиск", icon: Search },
   { href: "/sources", label: "Источники", icon: FolderOpen },
 ] as const;
 

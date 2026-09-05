@@ -243,6 +243,13 @@ jobs:
           echo "--- both populations still list"
           test "$(api localhost:8000/api/sources)" = 200
 
+          echo "--- search answers, and says the index is missing rather than 500ing"
+          # No indexer in this job, which is the point: the endpoint has to
+          # come back as a service that is unavailable, not as a broken request.
+          test "$(api 'localhost:8000/api/search?q=%D1%82%D0%B5%D1%81%D1%82')" = 503
+          cat /tmp/body
+          test "$(api localhost:8000/api/search)" = 422
+
           echo "--- a chat pages from its end"
           test "$(api -X POST localhost:8000/api/chats)" = 201
           chat=$(python3 -c "import json;print(json.load(open('/tmp/body'))['id'])")

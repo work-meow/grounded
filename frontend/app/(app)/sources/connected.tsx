@@ -34,7 +34,9 @@ import {
   type ConnectorKind,
   type ConnectorOut,
   type ConnectorsOut,
+  type SourceStatus,
 } from "@/lib/api";
+import { cn } from "@/lib/utils";
 
 type Presentation = {
   label: string;
@@ -129,6 +131,22 @@ const CATALOGUE: Record<ConnectorKind, Presentation> = {
 const KINDS = Object.keys(CATALOGUE) as ConnectorKind[];
 
 /**
+ * How long to wait before asking again, while any source is still unchecked.
+ *
+ * Adding a source restarts the indexer, which then has to poll before it can
+ * say anything — up to a minute in which the only honest answer is "not looked
+ * at yet". Making somebody reload the page to find out how it went would be
+ * much the same as not reporting it.
+ */
+const POLL_MS = 10_000;
+
+const DOT: Record<SourceStatus, string> = {
+  ok: "bg-emerald-500",
+  error: "bg-destructive",
+  unknown: "bg-muted-foreground/40",
+};
+
+/**
  * Drive is the one kind that needs setting up on the server: the service
  * account key lives in the indexer, and its address is what a user shares a
  * folder with. Without that address there is nothing to tell them to share
@@ -156,12 +174,27 @@ export function ConnectedSources({ onChanged }: { onChanged: () => void }) {
 
   useEffect(() => {
     let cancelled = false;
-    api
-      .connectors()
-      .then((loaded) => !cancelled && setState(loaded))
-      .catch(() => !cancelled && setFailed(true));
+    let timer: ReturnType<typeof setTimeout>;
+
+    const load = async (first: boolean) => {
+      try {
+        const loaded = await api.connectors();
+        if (cancelled) return;
+        setState(loaded);
+        if (loaded.sources.some((source) => source.status === "unknown")) {
+          timer = setTimeout(() => void load(false), POLL_MS);
+        }
+      } catch {
+        // A dropped poll is not worth replacing the list with an error; a
+        // failed first load is the difference between empty and broken.
+        if (!cancelled && first) setFailed(true);
+      }
+    };
+
+    void load(true);
     return () => {
       cancelled = true;
+      clearTimeout(timer);
     };
   }, [reload]);
 
@@ -267,6 +300,15 @@ function ConnectedCard({
         <div className="min-w-0 flex-1">
           <p className="truncate text-sm font-medium">{source.name}</p>
           <p className="text-xs text-muted-foreground">{label}</p>
+          <p
+            className={cn(
+              "mt-1 flex items-center gap-1.5 text-xs",
+              source.status === "error" ? "text-destructive" : "text-muted-foreground",
+            )}
+          >
+            <span className={cn("size-1.5 shrink-0 rounded-full", DOT[source.status])} />
+            <span className="min-w-0 flex-1">{report(source)}</span>
+          </p>
         </div>
         <Button
           variant="ghost"
@@ -280,6 +322,39 @@ function ConnectedCard({
       </CardContent>
     </Card>
   );
+}
+
+/**
+ * What to say about a source, in one line.
+ *
+ * The problem text comes from the indexer, which is the only process that ever
+ * talks to the service. It has already been reduced there to a sentence about
+ * the cause, because the exception behind it carries urls, internal hostnames
+ * and on some clients the credential itself.
+ */
+function report(source: ConnectorOut): string {
+  if (source.status === "error") return source.problem || "источник недоступен";
+  if (source.status === "unknown") return "ожидает первой проверки";
+  const seen = source.documents === null ? "" : ` · ${files(source.documents)}`;
+  return `проверен ${ago(source.checked_at)}${seen}`;
+}
+
+function ago(iso: string | null): string {
+  if (!iso) return "только что";
+  const minutes = Math.round((Date.now() - Date.parse(iso)) / 60_000);
+  if (minutes < 1) return "только что";
+  if (minutes < 60) return `${minutes} мин назад`;
+  const hours = Math.round(minutes / 60);
+  return hours < 24 ? `${hours} ч назад` : `${Math.round(hours / 24)} дн назад`;
+}
+
+/** What the last listing saw. Zero is the useful number here, not a blank. */
+function files(count: number): string {
+  const tail = count % 10;
+  const teens = count % 100;
+  if (tail === 1 && teens !== 11) return `${count} файл`;
+  if (tail >= 2 && tail <= 4 && (teens < 12 || teens > 14)) return `${count} файла`;
+  return `${count} файлов`;
 }
 
 function AddForm({

@@ -35,6 +35,7 @@ from pathway.io.python import ConnectorSubject
 from rag_shared.connectors import ConnectorSpec
 from rag_shared.formats import is_supported
 
+from rag_indexer import health
 from rag_indexer.connectors.contract import COMMIT_INTERVAL_MS, clean_name, describe
 
 logger = logging.getLogger(__name__)
@@ -130,6 +131,7 @@ class _PollingSubject(ConnectorSubject):
         spec: ConnectorSpec,
         refresh_interval: float,
         size_limit: int,
+        reporter: health.Reporter = health.SILENT,
         mode: Literal["streaming", "static"] = "streaming",
     ) -> None:
         super().__init__(datasource_name=spec.kind.value)
@@ -137,6 +139,7 @@ class _PollingSubject(ConnectorSubject):
         self._spec = spec
         self._refresh_interval = refresh_interval
         self._size_limit = size_limit
+        self._reporter = reporter
         self._mode = mode
         self._label = f"{spec.kind.value} source {spec.source_id}"
 
@@ -194,14 +197,15 @@ class _PollingSubject(ConnectorSubject):
         """One pass. Returns whether the source could be listed at all."""
         try:
             listing = self._source.contents()
-        except Exception:
-            # ponytail: the failure lives in the log and nowhere else. A token
-            # revoked at the far end therefore leaves the source looking healthy
-            # in the UI, with documents that quietly stop being updated.
-            # Ceiling: a stale source nobody is told about. Upgrade path: the
-            # indexer would have to report back to the API — a channel that does
-            # not exist yet and is the whole cost of fixing this.
+        except Exception as exc:
             logger.exception("%s: could not be listed; keeping the last snapshot", self._label)
+            # The log is for us; this is for the person whose token was revoked.
+            # Without it the source goes on looking healthy in the UI while its
+            # documents quietly stop being updated, which is the one failure
+            # here that nobody would think to look for.
+            self._reporter.report(
+                self._spec.source_id, ok=False, problem=health.describe_failure(exc)
+            )
             return False
 
         found = {file.external_id: file for file in listing.files}
@@ -224,6 +228,14 @@ class _PollingSubject(ConnectorSubject):
                 continue
             if self._store(file):
                 indexed[file.external_id] = file.modified_at
+
+        # Everything the listing returned, not everything that reached the
+        # index: a folder of twenty holiday photos and one contract is a source
+        # that is working, and a count of one would read as a source that is
+        # half broken. Zero is the number worth showing — it is what an empty
+        # folder, the wrong folder id, and Notion pages nobody shared with the
+        # integration all look like.
+        self._reporter.report(self._spec.source_id, ok=True, documents=len(found))
         return True
 
     def _store(self, file: RemoteFile) -> bool:
@@ -287,6 +299,7 @@ def polling_table(
     spec: ConnectorSpec,
     refresh_interval: float,
     size_limit: int,
+    reporter: health.Reporter = health.SILENT,
     mode: Literal["streaming", "static"] = "streaming",
 ) -> pw.Table:
     """The input table for one polled source, already in our metadata shape."""
@@ -296,6 +309,7 @@ def polling_table(
             spec=spec,
             refresh_interval=refresh_interval,
             size_limit=size_limit,
+            reporter=reporter,
             mode=mode,
         ),
         # Pathway deprecates `format` in favour of a schema and next(**values),

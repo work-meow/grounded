@@ -16,6 +16,7 @@ import logging
 import pathway as pw
 from rag_shared.connectors import ConnectorSpec, Kind
 
+from rag_indexer import health
 from rag_indexer.config import IndexerSettings
 from rag_indexer.connectors import files
 from rag_indexer.connectors.dropbox import DropboxSource
@@ -38,8 +39,16 @@ _POLLED: dict[Kind, type[RemoteSource]] = {
 }
 
 
-def build_tables(settings: IndexerSettings, specs: list[ConnectorSpec]) -> list[pw.Table]:
-    """The uploads table, plus one table per source that could be connected."""
+def build_tables(
+    settings: IndexerSettings,
+    specs: list[ConnectorSpec],
+    reporter: health.Reporter = health.SILENT,
+) -> list[pw.Table]:
+    """The uploads table, plus one table per source that could be connected.
+
+    The reporter is passed in rather than made here so that the tests, and the
+    static-mode graph, build the same connectors without a bucket to publish to.
+    """
     tables = [files.build(settings)]
     credentials: dict | None = None
 
@@ -57,10 +66,20 @@ def build_tables(settings: IndexerSettings, specs: list[ConnectorSpec]) -> list[
                 spec=spec,
                 refresh_interval=settings.refresh_interval_s,
                 size_limit=settings.max_document_bytes,
+                reporter=reporter,
             )
         except Exception:
             logger.exception(
                 "could not connect %s source %s; skipping it", spec.kind, spec.source_id
+            )
+            # A source skipped here is never polled, so it would never report —
+            # and an unreported source shows in the UI as one nobody has looked
+            # at yet, which for a Drive folder on a deployment with no service
+            # account key would stay true for ever.
+            reporter.report(
+                spec.source_id,
+                ok=False,
+                problem="источник не удалось подключить: проверьте настройки",
             )
             continue
 

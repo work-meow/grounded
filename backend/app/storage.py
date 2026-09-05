@@ -1,15 +1,23 @@
-"""S3 access for the original files.
+"""S3 access for the original files, and for the two documents the API and the
+indexer use to talk.
 
-The API only ever writes here. Reading and indexing is the indexer's job — it
-watches the same bucket through Pathway's S3 connector.
+Uploads are write-only from here: reading and indexing them is the indexer's
+job, through Pathway's S3 connector on the same bucket. The exception is the
+pair of small control documents — the connector manifest this process writes,
+and the source-health document the indexer writes back (rag_shared.health) —
+which is why there is a reader at all.
 """
 
+import logging
 from contextlib import asynccontextmanager
 
 import aioboto3
 from botocore.config import Config
+from botocore.exceptions import BotoCoreError, ClientError
 
 from app.config import Settings
+
+logger = logging.getLogger(__name__)
 
 _session = aioboto3.Session()
 
@@ -51,6 +59,27 @@ async def put(settings: Settings, key: str, body: bytes, content_type: str) -> N
         await client.put_object(
             Bucket=settings.s3_bucket, Key=key, Body=body, ContentType=content_type
         )
+
+
+async def get(settings: Settings, key: str) -> bytes | None:
+    """One small object, or None if it is not there or could not be read.
+
+    None rather than an exception, because the only caller is asking about a
+    document written by another process that may not have started yet. A source
+    list that failed because the indexer has never published its health would be
+    a worse answer than a source list with nothing known about it.
+    """
+    try:
+        async with _client(settings) as client:
+            response = await client.get_object(Bucket=settings.s3_bucket, Key=key)
+            return await response["Body"].read()
+    except ClientError as exc:
+        if exc.response.get("Error", {}).get("Code") not in ("NoSuchKey", "404", "NoSuchBucket"):
+            logger.warning("could not read %s from the bucket", key)
+        return None
+    except BotoCoreError:
+        logger.warning("could not read %s from the bucket", key)
+        return None
 
 
 async def delete(settings: Settings, key: str) -> None:

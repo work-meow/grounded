@@ -30,6 +30,15 @@ class ConnectorOut(BaseModel):
     kind: Kind
     name: str
     created_at: datetime
+    #: What the indexer last reported about it. "unknown" until it has looked
+    #: once — never "ok", because a source nobody has read is not a working one.
+    status: connectors.Status = connectors.Status.UNKNOWN
+    #: Why it is not working, in words the user can act on. Empty otherwise.
+    problem: str = ""
+    #: When the indexer last looked, and how many entries it saw then. Null
+    #: until it has; zero documents is a diagnosis, not a missing value.
+    checked_at: datetime | None = None
+    documents: int | None = None
 
 
 class ConnectorsOut(BaseModel):
@@ -70,9 +79,13 @@ async def list_connectors(
         .scalars()
         .all()
     )
+    # One small read from the bucket, alongside the query. The alternative — a
+    # column this API keeps current — would mean the indexer reaching into the
+    # database, which it has never had to do for anything else.
+    health = await connectors.statuses(settings)
     return ConnectorsOut(
         sources=[
-            ConnectorOut(id=row.id, kind=Kind(row.kind), name=row.name, created_at=row.created_at)
+            _out(row, health.get(row.id, connectors.UNCHECKED))
             for row in rows
             # A kind this build no longer knows would break the response model
             # for every other source in the list.
@@ -137,8 +150,21 @@ async def add_connector(
     # recoverable, rather than an index rebuilt around a row that vanished.
     await connectors.publish(settings, session)
 
+    # Unchecked, and it says so: the indexer has not seen this source yet and
+    # will not until it restarts around the new manifest.
+    return _out(source, connectors.UNCHECKED)
+
+
+def _out(row: Source, health: connectors.SourceStatus) -> ConnectorOut:
     return ConnectorOut(
-        id=source.id, kind=body.kind, name=source.name, created_at=source.created_at
+        id=row.id,
+        kind=Kind(row.kind),
+        name=row.name,
+        created_at=row.created_at,
+        status=health.status,
+        problem=health.problem,
+        checked_at=health.checked_at,
+        documents=health.documents,
     )
 
 

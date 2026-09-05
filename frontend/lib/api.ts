@@ -83,11 +83,21 @@ export type DocumentOut = {
 
 export type ConnectorKind = "gdrive" | "notion" | "yandex" | "dropbox" | "onedrive";
 
+/** What the indexer last managed to say about a source. */
+export type SourceStatus = "ok" | "error" | "unknown";
+
 export type ConnectorOut = {
   id: string;
   kind: ConnectorKind;
   name: string;
   created_at: string;
+  /** "unknown" until the indexer has looked once — never "ok" by default. */
+  status: SourceStatus;
+  /** Why it is not working, in words to show as they are. Empty otherwise. */
+  problem: string;
+  /** When the indexer last looked, and how many entries it saw then. */
+  checked_at: string | null;
+  documents: number | null;
 };
 
 export type ConnectorsOut = {

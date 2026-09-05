@@ -11,7 +11,13 @@ row whose manifest entry is one write behind — costs one polling interval and
 fixes itself on the next change.
 """
 
+import asyncio
 import logging
+import time
+from dataclasses import dataclass
+from datetime import UTC, datetime
+from enum import StrEnum
+from uuid import UUID
 
 from rag_shared.connectors import (
     MANIFEST_KEY,
@@ -21,6 +27,7 @@ from rag_shared.connectors import (
     dump_manifest,
 )
 from rag_shared.crypto import Sealer
+from rag_shared.health import HEALTH_KEY, SourceHealth, load_health
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -98,3 +105,72 @@ async def publish(settings: Settings, session: AsyncSession) -> None:
         ]
     )
     await storage.put(settings, MANIFEST_KEY, manifest, "application/json")
+
+
+class Status(StrEnum):
+    """How a connected source is doing, as far as anyone here can tell."""
+
+    OK = "ok"
+    ERROR = "error"
+    #: Nothing has been heard about it. Normal for the first minute of a
+    #: source's life — the indexer restarts to pick it up, then polls — and it
+    #: is deliberately not called "ok".
+    UNKNOWN = "unknown"
+
+
+@dataclass(frozen=True, slots=True)
+class SourceStatus:
+    status: Status
+    #: Why, when something is wrong. Empty otherwise.
+    problem: str
+    #: When the indexer last looked. None when it never has.
+    checked_at: datetime | None
+    #: Entries its last successful listing returned. None when there was none.
+    documents: int | None
+
+
+UNCHECKED = SourceStatus(status=Status.UNKNOWN, problem="", checked_at=None, documents=None)
+
+_NO_INDEXER = "индексатор давно не отвечает: источник может быть не в актуальном состоянии"
+
+#: A budget for reading it. This is a kilobyte from a store one hop away, on the
+#: path of a page that has to render either way — an unknown status is a worse
+#: answer than a fresh one and a far better answer than a spinner.
+_TIMEOUT_S = 3.0
+
+
+async def statuses(settings: Settings) -> dict[UUID, SourceStatus]:
+    """What the indexer last said about each source.
+
+    Empty when it has never said anything, which is also what a missing bucket
+    or an unreadable document comes back as — every source is then reported as
+    unchecked, which is the honest answer and the one the UI can explain.
+    """
+    try:
+        async with asyncio.timeout(_TIMEOUT_S):
+            raw = await storage.get(settings, HEALTH_KEY)
+    except TimeoutError:
+        logger.warning("the source health document did not arrive in time")
+        return {}
+    if raw is None:
+        return {}
+    report = load_health(raw)
+    now = time.time()
+    return {
+        source_id: _status(entry, now, report.stale_after_s)
+        for source_id, entry in report.sources.items()
+    }
+
+
+def _status(entry: SourceHealth, now: float, stale_after_s: int) -> SourceStatus:
+    checked_at = datetime.fromtimestamp(entry.checked_at, tz=UTC)
+    # Staleness first, and it overrides a healthy report. The indexer rewrites
+    # the document after every pass, so an old "everything is fine" is not
+    # evidence that everything is fine — it is evidence that nothing has looked
+    # since, which is exactly the case this whole channel exists to stop the UI
+    # from painting green.
+    if stale_after_s and now - entry.checked_at > stale_after_s:
+        return SourceStatus(Status.ERROR, _NO_INDEXER, checked_at, entry.documents)
+    if not entry.ok:
+        return SourceStatus(Status.ERROR, entry.problem, checked_at, entry.documents)
+    return SourceStatus(Status.OK, "", checked_at, entry.documents)

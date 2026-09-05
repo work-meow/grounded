@@ -34,7 +34,7 @@ from pathway.xpacks.llm.splitters import RecursiveSplitter
 from rag_shared.connectors import ConnectorSpec
 from rag_shared.doc_key import tenant_metadata
 
-from rag_indexer import manifest
+from rag_indexer import health, manifest
 from rag_indexer.config import IndexerSettings
 from rag_indexer.connectors import build_tables
 from rag_indexer.parsers import parse_document
@@ -159,7 +159,7 @@ def build_store(settings: IndexerSettings, specs: list[ConnectorSpec]) -> Docume
         # One list, concatenated by DocumentStore: every source shares the same
         # parser, splitter and index, and differs only in where its bytes and
         # its metadata came from.
-        docs=build_tables(settings, specs),
+        docs=build_tables(settings, specs, health.BucketReporter(settings)),
         retriever_factory=retriever_factory,
         parser=pw.udf(parse_document),
         # Recursive, not TokenCount: it splits on paragraph and sentence

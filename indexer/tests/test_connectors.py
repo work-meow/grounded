@@ -117,10 +117,21 @@ class _Service:
         pass
 
 
+class _Recorder:
+    """The health channel, kept in memory."""
+
+    def __init__(self):
+        self.reports: list[tuple[bool, str, int | None]] = []
+
+    def report(self, source_id, *, ok, problem="", documents=None):
+        assert source_id == SOURCE
+        self.reports.append((ok, problem, documents))
+
+
 class _Subject(_PollingSubject):
     """The real diff, with the two calls into Pathway recorded instead."""
 
-    def __init__(self, service: _Service, *, size_limit: int = 1024):
+    def __init__(self, service: _Service, *, size_limit: int = 1024, reporter=None):
         super().__init__(
             service,
             spec=ConnectorSpec(
@@ -128,6 +139,7 @@ class _Subject(_PollingSubject):
             ),
             refresh_interval=0,
             size_limit=size_limit,
+            reporter=reporter or _Recorder(),
         )
         self.added: list[dict] = []
         self.removed: list[str] = []
@@ -273,6 +285,58 @@ def test_the_metadata_handed_to_pathway_is_ours():
     (metadata,) = subject.added
     assert parse_key(metadata["path"])["user_id"] == str(USER)
     assert metadata.keys() == {"path", "modified_at", "seen_at", "web_url", "size"}
+
+
+# --- what the UI is told -----------------------------------------------------
+
+
+def test_a_good_pass_reports_what_the_source_holds():
+    reporter = _Recorder()
+    subject = _Subject(_Service([_file("f1"), _file("f2")]), reporter=reporter)
+
+    subject._poll({})
+
+    assert reporter.reports == [(True, "", 2)]
+
+
+def test_an_empty_source_reports_zero_rather_than_a_problem():
+    """The wrong folder id, a folder with nothing in it, and Notion pages that
+    were never shared with the integration all look like this — and all of them
+    are things the person who connected it can fix, once they can see it."""
+    reporter = _Recorder()
+    subject = _Subject(_Service([]), reporter=reporter)
+
+    subject._poll({})
+
+    assert reporter.reports == [(True, "", 0)]
+
+
+def test_a_source_that_cannot_be_listed_says_so_instead_of_looking_healthy():
+    """The failure this whole channel exists for. Before it, a revoked token
+    was a log line, and the UI went on showing a source that was fine."""
+    service = _Service([_file()])
+    reporter = _Recorder()
+    subject = _Subject(service, reporter=reporter)
+    subject._poll({})
+
+    service.listing_fails = True
+    subject._poll({})
+
+    ok, problem, _ = reporter.reports[-1]
+    assert ok is False
+    assert problem, "a failure with nothing to show the user is the bug being fixed"
+
+
+def test_a_file_that_will_not_download_does_not_condemn_the_source():
+    """One unreadable file is not an outage: the other documents indexed, and
+    saying otherwise would send someone to re-issue a working token."""
+    service = _Service([_file("f1"), _file("f2")])
+    service.fail_on = {"f1"}
+    reporter = _Recorder()
+
+    _Subject(service, reporter=reporter)._poll({})
+
+    assert reporter.reports == [(True, "", 2)]
 
 
 # --- through a real graph ----------------------------------------------------

@@ -225,6 +225,15 @@ jobs:
             exit 1
           fi
 
+          echo "--- a source nobody has indexed yet does not report as healthy"
+          test "$(api localhost:8000/api/connectors)" = 200
+          python3 -c "
+          import json,sys
+          source = json.load(open('/tmp/body'))['sources'][0]
+          assert source['status'] == 'unknown', source
+          print('status:', source['status'])
+          "
+
           echo "--- both populations still list"
           test "$(api localhost:8000/api/sources)" = 200
 

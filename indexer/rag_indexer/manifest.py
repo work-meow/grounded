@@ -22,12 +22,11 @@ import threading
 import time
 from dataclasses import dataclass
 
-import botocore.session
-from botocore.config import Config
 from botocore.exceptions import BotoCoreError, ClientError
 from rag_shared.connectors import MANIFEST_KEY, ConnectorSpec, load_manifest
 from rag_shared.crypto import Sealer
 
+from rag_indexer import bucket
 from rag_indexer.config import IndexerSettings
 
 logger = logging.getLogger(__name__)
@@ -81,10 +80,8 @@ def watch(settings: IndexerSettings, manifest: Manifest) -> None:
 
 
 def _watch(settings: IndexerSettings, etag: str) -> None:
-    # One client for the life of the thread. Building a botocore client parses
-    # the service model from JSON, which is far more work than the HEAD it is
-    # for, and this runs every thirty seconds forever.
-    client = _client(settings)
+    # One client for the life of the thread; see bucket.client.
+    client = bucket.client(settings)
     while True:
         time.sleep(settings.manifest_poll_s)
         current = _etag(client, settings)
@@ -98,25 +95,9 @@ def _watch(settings: IndexerSettings, etag: str) -> None:
         os._exit(RESTART_CODE)
 
 
-def _client(settings: IndexerSettings):
-    return botocore.session.get_session().create_client(
-        "s3",
-        endpoint_url=settings.s3_endpoint_url,
-        region_name=settings.s3_region,
-        aws_access_key_id=settings.s3_access_key_id,
-        aws_secret_access_key=settings.s3_secret_access_key,
-        config=Config(
-            s3={"addressing_style": "path" if settings.s3_path_style else "auto"},
-            retries={"max_attempts": 3, "mode": "standard"},
-            connect_timeout=10,
-            read_timeout=30,
-        ),
-    )
-
-
 def _fetch(settings: IndexerSettings) -> tuple[bytes | None, str]:
     try:
-        response = _client(settings).get_object(Bucket=settings.s3_bucket, Key=MANIFEST_KEY)
+        response = bucket.client(settings).get_object(Bucket=settings.s3_bucket, Key=MANIFEST_KEY)
         return response["Body"].read(), str(response.get("ETag", ""))
     except ClientError as exc:
         if exc.response.get("Error", {}).get("Code") in ("NoSuchKey", "404"):

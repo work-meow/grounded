@@ -131,14 +131,18 @@ const CATALOGUE: Record<ConnectorKind, Presentation> = {
 const KINDS = Object.keys(CATALOGUE) as ConnectorKind[];
 
 /**
- * How long to wait before asking again, while any source is still unchecked.
+ * How long to wait before asking again.
  *
- * Adding a source restarts the indexer, which then has to poll before it can
- * say anything — up to a minute in which the only honest answer is "not looked
- * at yet". Making somebody reload the page to find out how it went would be
- * much the same as not reporting it.
+ * Quickly while a source is still unchecked: adding one restarts the indexer,
+ * which then has to poll before it can say anything, and up to a minute of "not
+ * looked at yet" is the honest answer to a question somebody just asked.
+ *
+ * Slowly the rest of the time, but not never — the line says how long ago a
+ * source was checked, and one rendered once would go on claiming three minutes
+ * for as long as the tab stayed open.
  */
 const POLL_MS = 10_000;
+const IDLE_POLL_MS = 60_000;
 
 const DOT: Record<SourceStatus, string> = {
   ok: "bg-emerald-500",
@@ -181,8 +185,9 @@ export function ConnectedSources({ onChanged }: { onChanged: () => void }) {
         const loaded = await api.connectors();
         if (cancelled) return;
         setState(loaded);
-        if (loaded.sources.some((source) => source.status === "unknown")) {
-          timer = setTimeout(() => void load(false), POLL_MS);
+        if (loaded.sources.length > 0) {
+          const waiting = loaded.sources.some((source) => source.status === "unknown");
+          timer = setTimeout(() => void load(false), waiting ? POLL_MS : IDLE_POLL_MS);
         }
       } catch {
         // A dropped poll is not worth replacing the list with an error; a

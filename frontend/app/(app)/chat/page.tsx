@@ -381,7 +381,7 @@ export default function ChatPage() {
               ) : null}
 
               {messages.map((message) => (
-                <Bubble key={message.id} message={message} />
+                <Bubble key={message.id} message={message} chatId={activeId} />
               ))}
 
               {active && (

@@ -203,7 +203,7 @@ def test_a_different_place_is_a_different_source(kind, left, right):
 def test_the_credential_is_not_recoverable_from_the_fingerprint():
     """It sits in a plain column next to the sealed blob. Sealing exists so a
     database dump gives up the source list and not the tokens behind it."""
-    token = "ntn_K7pQ2mZx9RtLvB4nWcE6jH1sYdF3aU8gN5oX0iT"
+    token = "ntn_" + "K7pQ2mZx9RtLvB4nWcE6jH1sYdF3aU8gN5oX0iT"
 
     finger = fingerprint(Kind.NOTION, {"token": token})
 

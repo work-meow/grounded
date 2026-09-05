@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { Loader2, PanelLeft, Plus, SendHorizontal, Square, Trash2 } from "lucide-react";
+import { Check, Copy, Loader2, PanelLeft, Plus, SendHorizontal, Square, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -328,53 +328,53 @@ export default function ChatPage() {
         </div>
 
         <div className="relative flex flex-1 flex-col overflow-hidden">
-        {loadingOlder && (
-          // Out of the flow on purpose: anything that took up space here would
-          // change the scroll height between measuring it and restoring it.
-          <div className="pointer-events-none absolute inset-x-0 top-2 z-10 flex justify-center">
-            <span className="rounded-full border bg-background px-2 py-1 shadow-sm">
-              <Loader2 className="size-4 animate-spin text-muted-foreground" />
-            </span>
-          </div>
-        )}
-        <div
-          ref={viewportRef}
-          onScroll={onScroll}
-          className="flex-1 overflow-y-auto"
-          // The browser's own scroll anchoring would move the same scroll
-          // position this component adjusts by hand, and the two together
-          // overshoot.
-          style={{ overflowAnchor: "none" }}
-        >
-          <div className="mx-auto flex w-full max-w-3xl flex-col gap-6 p-4 sm:p-6">
-            {loading ? (
-              <Skeleton className="h-20 w-full" />
-            ) : messages.length === 0 && !active ? (
-              <EmptyState />
-            ) : null}
+          {loadingOlder && (
+            // Out of the flow on purpose: anything that took up space here would
+            // change the scroll height between measuring it and restoring it.
+            <div className="pointer-events-none absolute inset-x-0 top-2 z-10 flex justify-center">
+              <span className="rounded-full border bg-background px-2 py-1 shadow-sm">
+                <Loader2 className="size-4 animate-spin text-muted-foreground" />
+              </span>
+            </div>
+          )}
+          <div
+            ref={viewportRef}
+            onScroll={onScroll}
+            className="flex-1 overflow-y-auto"
+            // The browser's own scroll anchoring would move the same scroll
+            // position this component adjusts by hand, and the two together
+            // overshoot.
+            style={{ overflowAnchor: "none" }}
+          >
+            <div className="mx-auto flex w-full max-w-3xl flex-col gap-6 p-4 sm:p-6">
+              {loading ? (
+                <Skeleton className="h-20 w-full" />
+              ) : messages.length === 0 && !active ? (
+                <EmptyState />
+              ) : null}
 
-            {messages.map((message) => (
-              <Bubble key={message.id} message={message} />
-            ))}
+              {messages.map((message) => (
+                <Bubble key={message.id} message={message} />
+              ))}
 
-            {active && (
-              <Bubble
-                // A fixed id: localMessage() would mint a fresh UUID on every
-                // token as the answer streams in.
-                message={{
-                  id: "streaming",
-                  role: "assistant",
-                  content: active.text,
-                  citations: active.citations,
-                  created_at: "",
-                }}
-                pending={active.text === ""}
-                step={active.step}
-              />
-            )}
-            <div ref={bottomRef} />
+              {active && (
+                <Bubble
+                  // A fixed id: localMessage() would mint a fresh UUID on every
+                  // token as the answer streams in.
+                  message={{
+                    id: "streaming",
+                    role: "assistant",
+                    content: active.text,
+                    citations: active.citations,
+                    created_at: "",
+                  }}
+                  pending={active.text === ""}
+                  step={active.step}
+                />
+              )}
+              <div ref={bottomRef} />
+            </div>
           </div>
-        </div>
         </div>
 
         <div className="border-t p-3 sm:p-4">
@@ -515,9 +515,59 @@ function Bubble({
             message.content
           )}
         </div>
-        {message.citations.length > 0 && <Citations citations={message.citations} />}
+        {/* One row for everything the finished answer offers: where it came
+            from, and a way to take it with you. */}
+        {!isUser && !pending && message.content && (
+          <div className="flex flex-wrap items-center gap-1.5">
+            <Citations citations={message.citations} />
+            <CopyButton text={message.content} />
+          </div>
+        )}
       </div>
     </div>
+  );
+}
+
+/**
+ * Take the answer with you.
+ *
+ * Kept visible rather than revealed on hover: there is no hover on a phone,
+ * and a control that only exists for a mouse is a control half the time.
+ */
+function CopyButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(
+    () => () => {
+      if (timer.current) clearTimeout(timer.current);
+    },
+    [],
+  );
+
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      if (timer.current) clearTimeout(timer.current);
+      timer.current = setTimeout(() => setCopied(false), 1500);
+    } catch {
+      // Refused rather than broken: the clipboard needs a secure context and a
+      // real user gesture, and some browsers refuse it in an iframe regardless.
+      toast.error("Браузер не дал скопировать");
+    }
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={() => void copy()}
+      aria-label={copied ? "Скопировано" : "Скопировать ответ"}
+      className="inline-flex items-center gap-1 rounded-full border bg-background px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+    >
+      {copied ? <Check className="size-3" /> : <Copy className="size-3" />}
+      {copied ? "Скопировано" : "Копировать"}
+    </button>
   );
 }
 
@@ -533,7 +583,7 @@ function Citations({ citations }: { citations: Citation[] }) {
   }
 
   return (
-    <div className="flex flex-wrap gap-1.5">
+    <>
       {citations.map((citation) => (
         <button
           key={`${citation.document_id}-${citation.page}-${citation.n}`}
@@ -547,7 +597,7 @@ function Citations({ citations }: { citations: Citation[] }) {
           {citation.page !== null && <span>· стр. {citation.page}</span>}
         </button>
       ))}
-    </div>
+    </>
   );
 }
 

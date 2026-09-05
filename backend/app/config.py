@@ -78,6 +78,7 @@ class Settings(BaseSettings):
     # told to search again with different wording when the first fragments do
     # not answer, and these are what stop that being an invitation to loop.
     max_knowledge_searches_per_run: int = 3
+    max_web_searches_per_run: int = 2
     max_tool_calls_per_run: int = 6
     max_model_calls_per_run: int = 8
     # How much chat history is replayed into the agent each turn.
@@ -87,6 +88,24 @@ class Settings(BaseSettings):
     # it, so every turn is told what day it is — in this zone. UTC is a safe
     # default and a wrong one for most people; set it to where you are.
     timezone: str = "UTC"
+
+    # --- web search (only when the user turns it on for a message) ------------
+    # Called directly rather than through LangChain: the web plugin is an
+    # OpenRouter extension to the request body, not something a chat model
+    # wrapper exposes. Hence a base url here, which nothing else needed.
+    openrouter_base_url: str = "https://openrouter.ai/api/v1"
+    # A separate, cheaper model does the searching and relays what it found;
+    # the agent above it writes the answer.
+    web_search_model: str = "google/gemini-2.5-flash-lite"
+    # Which search back end OpenRouter should use. Measured on one query:
+    # parallel/turbo $0.00125 a call and 2.2 s, exa $0.0072 and 3.3 s with less
+    # text per source. Gemini has no native search on OpenRouter at all — that
+    # request is refused outright — so an external engine is the only option.
+    web_search_engine: str = "parallel"
+    web_search_results: int = 4
+    # Its own budget, inside the turn's. A slow search must not eat the whole
+    # answer: the agent can still reply from the knowledge base without it.
+    web_search_timeout_s: float = 30.0
 
     # --- http -----------------------------------------------------------------
     cors_origins: list[str] = ["http://localhost:3000"]

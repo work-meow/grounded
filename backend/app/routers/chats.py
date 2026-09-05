@@ -58,6 +58,11 @@ class MessagesOut(BaseModel):
 
 class AskRequest(BaseModel):
     question: str = Field(min_length=1, max_length=8000)
+    #: Whether the agent may look things up on the open web for this one
+    #: message. Per message rather than per user: it costs money per search,
+    #: and the person asking is the one who knows whether the answer is in
+    #: their documents or in today's news.
+    web: bool = False
 
 
 @router.get("")
@@ -195,7 +200,7 @@ async def ask(
         await session.commit()
 
     return StreamingResponse(
-        _stream(settings, user_id, chat_id, question, list(reversed(history))),
+        _stream(settings, user_id, chat_id, question, list(reversed(history)), body.web),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
@@ -211,6 +216,7 @@ async def _stream(
     chat_id: uuid.UUID,
     question: str,
     history: list[Message],
+    web: bool,
 ) -> AsyncIterator[str]:
     """Relay the agent's events as SSE, saving the answer however the turn ends.
 
@@ -227,7 +233,7 @@ async def _stream(
     parts: list[str] = []
     citations: list[dict[str, Any]] = []
     try:
-        async for kind, payload in agent.answer(settings, user_id, question, history):
+        async for kind, payload in agent.answer(settings, user_id, question, history, web):
             if kind == "token":
                 parts.append(payload)
                 yield _sse("token", payload)

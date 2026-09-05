@@ -43,6 +43,7 @@ def stream():
         chat_id=uuid.uuid4(),
         question="q",
         history=[],
+        web=False,
     )
 
 

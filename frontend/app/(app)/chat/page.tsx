@@ -1,10 +1,21 @@
 "use client";
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { Check, Copy, Loader2, PanelLeft, Plus, SendHorizontal, Square, Trash2 } from "lucide-react";
+import {
+  Check,
+  Copy,
+  Globe,
+  Loader2,
+  PanelLeft,
+  Plus,
+  SendHorizontal,
+  Square,
+  Trash2,
+} from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Sheet, SheetContent, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
@@ -38,6 +49,7 @@ const LOAD_OLDER_PX = 300;
  */
 const STEP_LABEL: Record<string, string> = {
   search_knowledge: "Ищу в базе знаний",
+  search_web: "Ищу в сети",
   list_sources: "Смотрю, какие есть документы",
   read_document: "Читаю документ",
 };
@@ -63,6 +75,10 @@ export default function ChatPage() {
   const [loadingOlder, setLoadingOlder] = useState(false);
   // The chat list, on a screen too narrow for it to live beside the messages.
   const [drawer, setDrawer] = useState(false);
+  // Whether the agent may search the web. Sticky once turned on, like every
+  // other chat program: it is a mode somebody chooses, not a per-message
+  // decision they want to make twice.
+  const [web, setWeb] = useState(false);
 
   // The stream only counts while its chat is the open one.
   const active = streaming?.chatId === activeId ? streaming : null;
@@ -219,6 +235,7 @@ export default function ChatPage() {
           },
         },
         controller.signal,
+        web,
       );
     } catch (cause) {
       // An abort is a stop, a chat switch or an unmount — not a failure.
@@ -251,7 +268,7 @@ export default function ChatPage() {
 
     // The first question becomes the chat title on the server.
     api.chats().then(setChats).catch(() => undefined);
-  }, [activeId, draft, active]);
+  }, [activeId, draft, active, web]);
 
   const onScroll = useCallback(() => {
     const viewport = viewportRef.current;
@@ -387,6 +404,7 @@ export default function ChatPage() {
 
         <div className="border-t p-3 sm:p-4">
           <div className="mx-auto flex w-full max-w-3xl items-end gap-2">
+            <Tools web={web} onToggle={setWeb} />
             <Textarea
               value={draft}
               onChange={(event) => setDraft(event.target.value)}
@@ -481,6 +499,64 @@ function ChatList({
         ))}
       </div>
     </>
+  );
+}
+
+/**
+ * What the agent is allowed to reach for, beyond the documents.
+ *
+ * One entry today, which is why it is a list rather than a switch: the shape
+ * that holds two is the same one, and the shape that holds one is the one
+ * people already know from every other chat.
+ *
+ * The button doubles as the indicator — when the web is on it says so, rather
+ * than a second chip somewhere else saying it. There is one control and one
+ * place to look.
+ */
+function Tools({ web, onToggle }: { web: boolean; onToggle: (on: boolean) => void }) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <Button
+          variant={web ? "secondary" : "outline"}
+          size="icon"
+          className={cn("h-11 shrink-0", web ? "w-auto gap-1.5 px-3" : "w-11")}
+          aria-label={web ? "Инструменты: поиск в сети включён" : "Инструменты"}
+        >
+          {web ? (
+            <>
+              <Globe className="size-4" />
+              <span className="text-xs">Сеть</span>
+            </>
+          ) : (
+            <Plus className="size-4" />
+          )}
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent side="top">
+        <p className="px-2 pt-1.5 pb-1 text-xs text-muted-foreground">Инструменты</p>
+        <button
+          type="button"
+          onClick={() => {
+            onToggle(!web);
+            setOpen(false);
+          }}
+          aria-pressed={web}
+          className="flex w-full items-start gap-2.5 rounded-md p-2 text-left transition-colors hover:bg-accent focus-visible:bg-accent focus-visible:outline-none"
+        >
+          <Globe className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+          <span className="min-w-0 flex-1">
+            <span className="block text-sm font-medium">Поиск в сети</span>
+            <span className="block text-xs text-muted-foreground">
+              Агент сможет искать в интернете то, чего нет в документах
+            </span>
+          </span>
+          {web && <Check className="mt-0.5 size-4 shrink-0" />}
+        </button>
+      </PopoverContent>
+    </Popover>
   );
 }
 
@@ -586,6 +662,13 @@ function CopyButton({ text }: { text: string }) {
 
 function Citations({ citations }: { citations: Citation[] }) {
   async function open(citation: Citation) {
+    // A page from the web is already a link; a document is one only after the
+    // server signs it. The server has already checked that either is a scheme
+    // a browser may be handed.
+    if (citation.url) {
+      window.open(citation.url, "_blank", "noopener,noreferrer");
+      return;
+    }
     if (!citation.document_id) return;
     try {
       const { url } = await api.documentLink(citation.document_id);
@@ -599,13 +682,14 @@ function Citations({ citations }: { citations: Citation[] }) {
     <>
       {citations.map((citation) => (
         <button
-          key={`${citation.document_id}-${citation.page}-${citation.n}`}
+          key={`${citation.document_id ?? citation.url}-${citation.page}-${citation.n}`}
           onClick={() => void open(citation)}
-          disabled={!citation.document_id}
+          disabled={!citation.document_id && !citation.url}
           title={citation.snippet}
           className="inline-flex items-center gap-1 rounded-full border bg-background px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-50"
         >
           <span className="font-medium text-foreground">[{citation.n}]</span>
+          {citation.url && <Globe className="size-3 shrink-0" />}
           <span className="max-w-52 truncate">{citation.filename ?? "документ"}</span>
           {citation.page !== null && <span>· стр. {citation.page}</span>}
         </button>

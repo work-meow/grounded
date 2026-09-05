@@ -23,7 +23,7 @@ from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 from langchain_core.tools import BaseTool, tool
 from langchain_openrouter import ChatOpenRouter
 
-from app import retriever
+from app import retriever, websearch
 from app.config import Settings
 from app.models import Message
 
@@ -45,6 +45,18 @@ SYSTEM_PROMPT = """\
 - Пиши обычным текстом, без markdown-разметки: интерфейс показывает ответ как
   есть, и «**жирный**» в нём видно звёздочками. Списки — простым дефисом.
 """
+
+#: Added only when the user turned web search on for this message. Left out
+#: entirely otherwise, rather than saying "у тебя нет доступа к интернету":
+#: naming a tool that is not bound is how a model ends up apologising for not
+#: calling it.
+WEB_RULES = """\
+- База знаний — первая. Если ответа в ней нет, или вопрос про внешний мир и
+  сегодняшний день (курсы, цены, новости, законы, факты о ком-то) — вызови
+  search_web.
+- Результаты из сети нумеруются вместе с фрагментами из базы: ссылайся на них
+  так же, как [1], [2].
+- Если и в сети ничего не нашлось, скажи об этом прямо."""
 
 
 #: Written out rather than taken from a locale. Russian month names need the
@@ -82,8 +94,8 @@ def _today(now: datetime) -> str:
     )
 
 
-def system_prompt(settings: Settings) -> str:
-    """The rules, plus what day it is.
+def system_prompt(settings: Settings, web: bool = False) -> str:
+    """The rules, what day it is, and — when it is on — how to use the web.
 
     A model has no idea. Half the questions asked of a personal knowledge base
     only mean something relative to today — "что на этой неделе", "сколько
@@ -96,7 +108,8 @@ def system_prompt(settings: Settings) -> str:
     stays eligible for upstream prompt caching.
     """
     today = _today(datetime.now(ZoneInfo(settings.timezone)))
-    return f"{SYSTEM_PROMPT}\n{today} Считай «сегодня», «вчера», «на этой неделе» от этой даты.\n"
+    rules = f"{SYSTEM_PROMPT}{WEB_RULES}\n" if web else SYSTEM_PROMPT
+    return f"{rules}\n{today} Считай «сегодня», «вчера», «на этой неделе» от этой даты.\n"
 
 
 #: How much of a source is kept for the chip the reader hovers. Enough to
@@ -124,6 +137,20 @@ class _Citations:
             snippet=chunk.text[:SNIPPET_CHARS],
         )
 
+    def add_link(self, source: websearch.Source) -> int:
+        """Register a page found on the web.
+
+        Numbered from the same counter as the fragments, because the answer
+        mixes them: an answer that leans on a document and a news item cites
+        [1] and [2] without the reader needing to know which is which.
+        """
+        return self._number(
+            (source.url, None),
+            filename=source.title or websearch.host(source.url),
+            snippet=source.text[:SNIPPET_CHARS],
+            url=source.url,
+        )
+
     def _number(self, key: tuple[str | None, int | None], **item: Any) -> int:
         if key not in self._numbers:
             self._numbers[key] = len(self.items) + 1
@@ -133,6 +160,7 @@ class _Citations:
                     "document_id": None,
                     "filename": None,
                     "page": None,
+                    "url": None,
                     **item,
                 }
             )
@@ -184,7 +212,19 @@ def _render(query: str, chunks: list[retriever.Chunk], citations: _Citations) ->
     return "\n\n".join(lines)
 
 
-def _build_tools(settings: Settings, user_id: UUID, citations: _Citations) -> list[BaseTool]:
+def _render_web(found: websearch.Result, citations: _Citations) -> str:
+    lines = []
+    if found.summary:
+        lines.append(f"Сводка поиска:\n{found.summary}")
+    for source in found.sources:
+        number = citations.add_link(source)
+        lines.append(f"[{number}] ({source.title} — {websearch.host(source.url)})\n{source.text}")
+    return "\n\n".join(lines)
+
+
+def _build_tools(
+    settings: Settings, user_id: UUID, citations: _Citations, web: bool = False
+) -> list[BaseTool]:
     """Tools bound to one user by closure.
 
     Binding at construction time (rather than passing the user through agent
@@ -247,7 +287,32 @@ def _build_tools(settings: Settings, user_id: UUID, citations: _Citations) -> li
         )
         return _render(query, chunks, citations)
 
-    return [search_knowledge, list_sources, read_document]
+    @tool
+    async def search_web(query: str) -> str:
+        """Найти информацию в интернете.
+
+        Вызывай, когда ответа нет в базе знаний пользователя или когда нужны
+        актуальные данные: новости, курсы, цены, законы, факты о внешнем мире.
+
+        Args:
+            query: Поисковый запрос. Формулируй самодостаточно, как для
+                поисковика: без местоимений и отсылок к предыдущим сообщениям.
+        """
+        try:
+            found = await websearch.search(settings, query)
+        except Exception:
+            # Never fatal: the turn can still be answered from the knowledge
+            # base, and a tool that raises takes the whole answer with it.
+            logger.exception("web search failed for %s", user_id)
+            return "Поиск в сети не сработал. Ответь по тому, что есть в базе знаний."
+        if not found.sources and not found.summary:
+            return f"По запросу «{query}» в сети ничего не нашлось."
+        return _render_web(found, citations)
+
+    tools: list[BaseTool] = [search_knowledge, list_sources, read_document]
+    if web:
+        tools.append(search_web)
+    return tools
 
 
 @lru_cache(maxsize=1)
@@ -311,7 +376,7 @@ def _query_of(args: str) -> str | None:
     return query.strip() if isinstance(query, str) and query.strip() else None
 
 
-def _limits(settings: Settings) -> list[Any]:
+def _limits(settings: Settings, web: bool) -> list[Any]:
     """Ceilings on one turn.
 
     Per tool as well as overall, and that is what makes the retry loop safe to
@@ -326,6 +391,16 @@ def _limits(settings: Settings) -> list[Any]:
             exit_behavior="continue",
         )
     ]
+    if web:
+        # Tighter, because this one costs real money per call rather than
+        # fractions of a cent: about $0.00125 a search.
+        limits.append(
+            ToolCallLimitMiddleware(
+                tool_name="search_web",
+                run_limit=settings.max_web_searches_per_run,
+                exit_behavior="continue",
+            )
+        )
     limits.append(
         ToolCallLimitMiddleware(run_limit=settings.max_tool_calls_per_run, exit_behavior="continue")
     )
@@ -340,6 +415,7 @@ async def answer(
     user_id: UUID,
     question: str,
     history: list[Message],
+    web: bool = False,
 ) -> AsyncIterator[tuple[str, Any]]:
     """Stream the turn as it happens, ending with one ``("citations", list)``.
 
@@ -347,8 +423,13 @@ async def answer(
     to call a tool, ``("token", str)`` for the answer as it is written, and the
     citations at the end.
 
+    ``web`` is per message, not per user: the search tool is bound only when it
+    is on, so a turn without it cannot spend money on one — and the model is
+    never told about a tool it does not have, which is how one ends up
+    apologising for not calling it.
+
     The agent is compiled per request so that its tools can close over the
-    user. Compiling a three-tool graph is cheap next to a single LLM call.
+    user. Compiling a four-tool graph is cheap next to a single LLM call.
     """
     citations = _Citations()
     agent = create_agent(
@@ -358,9 +439,9 @@ async def answer(
             settings.agent_temperature,
             settings.agent_reasoning_effort,
         ),
-        tools=_build_tools(settings, user_id, citations),
-        system_prompt=system_prompt(settings),
-        middleware=_limits(settings),
+        tools=_build_tools(settings, user_id, citations, web),
+        system_prompt=system_prompt(settings, web),
+        middleware=_limits(settings, web),
     )
 
     inputs = {"messages": [*_history(history), HumanMessage(question)]}

@@ -71,6 +71,12 @@ export type Citation = {
   filename: string | null;
   page: number | null;
   snippet: string;
+  /**
+   * Set for a page found on the web, where it is opened directly. Documents
+   * have none and are opened through a signed link instead. Absent on
+   * citations saved before web search existed, hence the loose check.
+   */
+  url?: string | null;
 };
 
 export type DocumentOut = {
@@ -225,12 +231,14 @@ export async function ask(
   question: string,
   handlers: StreamHandlers,
   signal?: AbortSignal,
+  /** Whether the agent may look things up on the web for this one message. */
+  web = false,
 ): Promise<void> {
   const response = await fetch(`${BASE}/api/chats/${chatId}/messages`, {
     method: "POST",
     credentials: "include",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ question }),
+    body: JSON.stringify({ question, web }),
     signal,
   });
 

@@ -276,6 +276,13 @@ jobs:
           cat /tmp/body
           test "$(api localhost:8000/api/search)" = 422
 
+          echo "--- a question declares whether it may use the web"
+          # The body is validated before anything reaches a model, so this
+          # costs nothing and still proves the field exists and is a boolean.
+          test "$(api -X POST "localhost:8000/api/chats/00000000-0000-0000-0000-000000000000/messages" \
+                    -H 'Content-Type: application/json' \
+                    -d '{"question":"привет","web":"maybe"}')" = 422
+
           echo "--- a chat pages from its end"
           test "$(api -X POST localhost:8000/api/chats)" = 201
           chat=$(python3 -c "import json;print(json.load(open('/tmp/body'))['id'])")

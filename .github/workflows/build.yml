@@ -243,6 +243,32 @@ jobs:
           echo "--- both populations still list"
           test "$(api localhost:8000/api/sources)" = 200
 
+          echo "--- an uploaded scan is called a scan"
+          # Authored with the pdfium already in the image: pages, no text — the
+          # thing that used to upload, index to nothing and look perfectly fine.
+          docker exec backend python -c "
+          import pypdfium2 as pdfium
+          scan = pdfium.PdfDocument.new()
+          scan.new_page(200, 200)
+          scan.save('/tmp/scan.pdf')
+          "
+          docker cp backend:/tmp/scan.pdf /tmp/scan.pdf
+          test "$(api -X POST localhost:8000/api/sources -F file=@/tmp/scan.pdf)" = 201
+          python3 -c "
+          import json
+          document = json.load(open('/tmp/body'))
+          assert document['text_layer'] is False, document
+          print('scan flagged:', document['filename'], document['text_layer'])
+          "
+
+          echo "--- and a format that has no such question gets no verdict"
+          printf 'Заметка про отпуск.\n' > /tmp/note.md
+          test "$(api -X POST localhost:8000/api/sources -F file=@/tmp/note.md)" = 201
+          python3 -c "
+          import json
+          assert json.load(open('/tmp/body'))['text_layer'] is None
+          "
+
           echo "--- search answers, and says the index is missing rather than 500ing"
           # No indexer in this job, which is the point: the endpoint has to
           # come back as a service that is unavailable, not as a broken request.

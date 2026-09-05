@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { CheckCircle2, FileText, Loader2, Trash2, Upload } from "lucide-react";
+import { CheckCircle2, FileText, Loader2, TriangleAlert, Trash2, Upload } from "lucide-react";
 import { toast } from "sonner";
 
 import { Badge } from "@/components/ui/badge";
@@ -65,8 +65,15 @@ export default function SourcesPage() {
     setUploading(true);
     for (const file of Array.from(files)) {
       try {
-        await api.upload(file);
-        toast.success(`${file.name} загружен, идёт индексация`);
+        const created = await api.upload(file);
+        if (created.text_layer === false) {
+          // Said now, not discovered later: the file is stored and indexed
+          // either way, but it will never come back from a search, and this is
+          // the one moment somebody is standing here able to do anything.
+          toast.warning(`${file.name}: похоже на скан — текста в файле нет, поиск его не найдёт`);
+        } else {
+          toast.success(`${file.name} загружен, идёт индексация`);
+        }
       } catch (cause) {
         toast.error(`${file.name}: ${describe(cause)}`);
       }
@@ -162,6 +169,16 @@ function DocumentCard({
               )}
               {ready ? "Проиндексирован" : "Индексация"}
             </Badge>
+            {document.text_layer === false && (
+              <Badge
+                variant="outline"
+                className="gap-1 border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-400"
+                title="Похоже на скан: в файле нет текстового слоя, поэтому поиск по его содержимому ничего не находит"
+              >
+                <TriangleAlert className="size-3" />
+                Без текста
+              </Badge>
+            )}
             <span className="text-xs text-muted-foreground">{size(document.size_bytes)}</span>
             <span className="text-xs text-muted-foreground">{document.source_name}</span>
           </div>

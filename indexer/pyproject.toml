@@ -27,8 +27,10 @@ dependencies = [
     # that python-docx handles in 34 ms.
     #
     # ponytail: pypdfium2 extracts embedded text, so a scanned PDF yields
-    # nothing. Ceiling: image-only documents. Upgrade path: detect empty output
-    # and fall back to an OCR pass.
+    # nothing. Ceiling: image-only documents are indexed as empty. The API now
+    # says so on upload (app/pdf.py), which is where the bytes and the document
+    # id are in the same place; this parser still cannot, because it is handed
+    # the bytes alone. Upgrade path: an OCR pass behind the same check.
     "pypdfium2>=5",
     "python-docx>=1.2",
     "python-pptx>=1.0",

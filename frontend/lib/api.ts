@@ -84,6 +84,12 @@ export type DocumentOut = {
   source_name: string;
   /** False for a document from a connected source: it is removed where it lives. */
   removable: boolean;
+  /**
+   * False for a PDF with no text in it — a scan, indexed and findable by
+   * nothing. Null means no claim was made: another format, an older upload, or
+   * a document from a connected source, whose bytes never passed through here.
+   */
+  text_layer: boolean | null;
 };
 
 export type ConnectorKind = "gdrive" | "notion" | "yandex" | "dropbox" | "onedrive";

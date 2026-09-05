@@ -22,6 +22,10 @@ dependencies = [
     "alembic>=1.16",
     # object storage for the original files
     "aioboto3>=15",
+    # Reads a PDF far enough to tell whether it has any text in it, so an
+    # uploaded scan is called a scan instead of quietly indexing to nothing.
+    # The same library the indexer parses with, so the two cannot disagree.
+    "pypdfium2>=5",
     # agent
     "langchain>=1.0",
     "langchain-openrouter>=0.2",
@@ -37,7 +41,8 @@ rag-token = "app.token:main"
 [dependency-groups]
 # httpx is not here: it is already a runtime dependency, and TestClient uses
 # that same one.
-dev = ["pytest>=8.4", "pytest-asyncio>=1.0", "ruff>=0.14"]
+# fpdf2 builds the PDFs the scan check is tested against, same as in the indexer.
+dev = ["pytest>=8.4", "pytest-asyncio>=1.0", "ruff>=0.14", "fpdf2>=2.8"]
 
 # A path dependency rather than a uv workspace: a workspace resolves to one
 # lockfile and one virtualenv, which is exactly what the API and the indexer

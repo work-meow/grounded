@@ -4,6 +4,7 @@ from typing import Any
 
 from sqlalchemy import (
     BigInteger,
+    Boolean,
     DateTime,
     ForeignKey,
     Index,
@@ -102,6 +103,11 @@ class Document(Base):
     s3_key: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
     mime_type: Mapped[str] = mapped_column(String(200), nullable=False)
     size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    # Whether a PDF was found to contain any text (app.pdf). False means a scan:
+    # indexed, searchable by nothing. Null for everything else — every other
+    # format we accept is text by construction, and a PDF that would not open
+    # is a file we have no claim to make about.
+    text_layer: Mapped[bool | None] = mapped_column(Boolean)
     created_at: Mapped[datetime] = _created_at()
 
     source: Mapped[Source] = relationship(back_populates="documents")

@@ -122,6 +122,7 @@ def _pdf(contents: bytes) -> list[tuple[str, dict]]:
     pages: list[tuple[str, dict]] = []
     document = pdfium.PdfDocument(contents)
     try:
+        total = len(document)
         for number, page in enumerate(document, start=1):
             # Every one of these wraps a C++ handle. Closing them explicitly,
             # and on the failure path too, is what keeps a malformed page from
@@ -136,6 +137,13 @@ def _pdf(contents: bytes) -> list[tuple[str, dict]]:
                 page.close()
             if text.strip():
                 pages.append((text, {"page_number": number}))
+        if total and not pages:
+            # Which file this was, we cannot say: the parser is handed the bytes
+            # and nothing else. The API names it on upload instead. This line is
+            # still worth having — it is what tells you, from the logs alone,
+            # that a document indexed to nothing on purpose rather than by
+            # crashing.
+            logger.warning("a PDF of %d page(s) yielded no text; it is probably a scan", total)
     finally:
         document.close()
     return pages

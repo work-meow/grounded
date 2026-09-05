@@ -6,6 +6,7 @@ fetched it, so the index is the only place that has seen it. Both are read back
 from the index, which is what makes "is it searchable yet?" answerable at all.
 """
 
+import asyncio
 import uuid
 from datetime import UTC, datetime
 from pathlib import PurePosixPath
@@ -19,7 +20,7 @@ from sqlalchemy import delete as sql_delete
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app import retriever, storage
+from app import pdf, retriever, storage
 from app.config import Settings
 from app.deps import SessionDep, SettingsDep, UserDep
 from app.models import Document, Source
@@ -40,6 +41,10 @@ class DocumentOut(BaseModel):
     #: document from a connected source is removed where it lives, and would
     #: come back on the next poll.
     removable: bool
+    #: False for a PDF with no text in it — a scan, indexed and findable by
+    #: nothing. Null means no claim: another format, an older upload, or a
+    #: document from a connected source, whose bytes never passed through here.
+    text_layer: bool | None = None
 
 
 async def _files_source(session: AsyncSession, user_id: uuid.UUID) -> Source:
@@ -120,6 +125,7 @@ async def list_documents(
             status="ready" if str(document.id) in indexed else "processing",
             source_name=names.get(document.source_id, "Загруженные файлы"),
             removable=True,
+            text_layer=document.text_layer,
         )
         for document in rows
     ]
@@ -172,6 +178,11 @@ async def upload(
     if not body:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Файл пустой")
 
+    # Before the upload is recorded, because the answer goes into the row — and
+    # while the person is still standing here, which is the whole reason this
+    # happens at upload rather than after indexing.
+    text_layer = await _text_layer(mime_type, body)
+
     source = await _files_source(session, user_id)
     document_id = uuid.uuid4()
     key = build_key(user_id, source.id, document_id, filename)
@@ -191,6 +202,7 @@ async def upload(
         s3_key=key,
         mime_type=mime_type,
         size_bytes=len(body),
+        text_layer=text_layer,
     )
     session.add(document)
     await session.commit()
@@ -205,7 +217,19 @@ async def upload(
         status="processing",
         source_name=source.name,
         removable=True,
+        text_layer=document.text_layer,
     )
+
+
+async def _text_layer(mime_type: str, body: bytes) -> bool | None:
+    """Whether this upload has text in it, for the formats where that is a question.
+
+    Off the event loop: reading a PDF is C code that can take a second or two on
+    a large one, and this runs in the process serving every other request.
+    """
+    if mime_type != "application/pdf":
+        return None
+    return await asyncio.to_thread(pdf.has_text_layer, body)
 
 
 @router.get("/{document_id}/link")

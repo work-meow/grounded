@@ -7,11 +7,13 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/work-meow/grounded/actions/workflows/build.yml"><img src="https://github.com/work-meow/grounded/actions/workflows/build.yml/badge.svg" alt="сборка"></a>
   <img src="https://img.shields.io/badge/поиск-10%2F10-2ea44f" alt="полнота поиска 10 из 10">
   <img src="https://img.shields.io/badge/ответы-13%2F13-2ea44f" alt="верных ответов 13 из 13">
   <img src="https://img.shields.io/badge/тестов-383-informational" alt="383 теста">
   <img src="https://img.shields.io/badge/python-3.13-blue" alt="python 3.13">
   <img src="https://img.shields.io/badge/next.js-16-black" alt="Next.js 16">
+  <img src="https://img.shields.io/badge/лицензия-MIT-blue" alt="лицензия MIT">
 </p>
 
 ![Чат с ответом и ссылками на источники](docs/chat.png)

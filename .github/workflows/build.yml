@@ -234,6 +234,23 @@ jobs:
           print('status:', source['status'])
           "
 
+          echo "--- an object store inside the network is refused"
+          # The one connector whose address comes from a form, on a box whose
+          # docker network carries the object store, the API and the database.
+          for address in http://127.0.0.1:9000 http://169.254.169.254 http://minio:9000; do
+            test "$(api -X POST localhost:8000/api/connectors \
+                      -H 'Content-Type: application/json' \
+                      -d "{\"kind\":\"s3\",\"name\":\"внутрь\",\"config\":{\"endpoint_url\":\"$address\",\"bucket\":\"rag\",\"access_key_id\":\"rag\",\"secret_access_key\":\"ragragrag\"}}")" = 422
+            cat /tmp/body; echo
+          done
+
+          echo "--- and a public one is accepted, optional fields and all"
+          test "$(api -X POST localhost:8000/api/connectors \
+                    -H 'Content-Type: application/json' \
+                    -d '{"kind":"s3","name":"облако","config":{"endpoint_url":"https://s3.us-west-004.backblazeb2.com","bucket":"documents","access_key_id":"k","secret_access_key":"s","prefix":"/договоры/"}}')" = 201
+          bucket=$(python3 -c "import json;print(json.load(open('/tmp/body'))['id'])")
+          test "$(api -X DELETE "localhost:8000/api/connectors/$bucket")" = 204
+
           echo "--- the same source cannot be connected twice"
           test "$(api -X POST localhost:8000/api/connectors \
                     -H 'Content-Type: application/json' \

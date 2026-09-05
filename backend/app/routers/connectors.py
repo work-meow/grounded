@@ -12,7 +12,7 @@ from datetime import datetime
 
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel, Field
-from rag_shared.connectors import REQUIRED_FIELDS, Kind, fingerprint
+from rag_shared.connectors import OPTIONAL_FIELDS, REQUIRED_FIELDS, Kind, fingerprint
 from sqlalchemy import delete as sql_delete
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
@@ -53,6 +53,9 @@ class ConnectorsOut(BaseModel):
     gdrive_service_account_email: str
     #: Which fields each kind needs, so the form and the API cannot disagree.
     required_fields: dict[Kind, list[str]]
+    #: And which it merely accepts, so the form can say so rather than making
+    #: somebody guess what to put in "Регион".
+    optional_fields: dict[Kind, list[str]]
 
 
 class ConnectorIn(BaseModel):
@@ -95,6 +98,7 @@ async def list_connectors(
         enabled=connectors.sealer(settings) is not None,
         gdrive_service_account_email=settings.gdrive_service_account_email,
         required_fields={kind: list(fields) for kind, fields in REQUIRED_FIELDS.items()},
+        optional_fields={kind: list(OPTIONAL_FIELDS.get(kind, ())) for kind in Kind},
     )
 
 
@@ -132,6 +136,7 @@ async def add_connector(
 
     try:
         config = connectors.clean_config(body.kind, body.config)
+        await connectors.verify_endpoint(config)
     except ValueError as exc:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
 

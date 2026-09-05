@@ -284,7 +284,14 @@ def test_the_metadata_handed_to_pathway_is_ours():
 
     (metadata,) = subject.added
     assert parse_key(metadata["path"])["user_id"] == str(USER)
-    assert metadata.keys() == {"path", "modified_at", "seen_at", "web_url", "size"}
+    assert metadata.keys() == {
+        "path",
+        "modified_at",
+        "seen_at",
+        "web_url",
+        "size",
+        "external_id",
+    }
 
 
 # --- what the UI is told -----------------------------------------------------
@@ -405,6 +412,14 @@ def test_every_kind_builds_and_the_tables_concatenate(monkeypatch):
         Kind.YANDEX: {"token": "y", "path": "/Docs"},
         Kind.DROPBOX: {"app_key": "a", "app_secret": "b", "refresh_token": "c", "path": "/D"},
         Kind.ONEDRIVE: {"client_id": "a", "client_secret": "b", "refresh_token": "c", "path": "D"},
+        # A routable literal: the address check is real, and a unit test that
+        # needs DNS is a unit test that fails on a train.
+        Kind.S3: {
+            "endpoint_url": "https://93.184.216.34:9000",
+            "bucket": "documents",
+            "access_key_id": "a",
+            "secret_access_key": "b",
+        },
     }
     specs = [
         ConnectorSpec(source_id=uuid.uuid4(), user_id=USER, kind=kind, name=kind.value, config=c)

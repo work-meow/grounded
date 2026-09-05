@@ -98,7 +98,7 @@ export type DocumentOut = {
   text_layer: boolean | null;
 };
 
-export type ConnectorKind = "gdrive" | "notion" | "yandex" | "dropbox" | "onedrive";
+export type ConnectorKind = "gdrive" | "notion" | "yandex" | "dropbox" | "onedrive" | "s3";
 
 /** What the indexer last managed to say about a source. */
 export type SourceStatus = "ok" | "error" | "unknown";
@@ -124,6 +124,8 @@ export type ConnectorsOut = {
   gdrive_service_account_email: string;
   /** The API decides which fields a kind needs, so the form cannot disagree. */
   required_fields: Record<ConnectorKind, string[]>;
+  /** And which it merely accepts, so the form can mark them as a choice. */
+  optional_fields: Record<ConnectorKind, string[]>;
 };
 
 /** One run of a search snippet. `hit` marks the words the query matched. */

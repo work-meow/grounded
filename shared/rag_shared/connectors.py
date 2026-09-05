@@ -41,6 +41,10 @@ class Kind(StrEnum):
     YANDEX = "yandex"
     DROPBOX = "dropbox"
     ONEDRIVE = "onedrive"
+    #: Any S3-compatible object store — the user's own MinIO, Backblaze B2,
+    #: Cloudflare R2, Wasabi, Selectel, AWS itself. One kind rather than one per
+    #: vendor: they differ in the endpoint and nothing else that matters here.
+    S3 = "s3"
 
 
 #: What each kind needs in its sealed config, and nothing optional.
@@ -58,6 +62,16 @@ REQUIRED_FIELDS: dict[Kind, tuple[str, ...]] = {
     Kind.YANDEX: ("token", "path"),
     Kind.DROPBOX: ("app_key", "app_secret", "refresh_token", "path"),
     Kind.ONEDRIVE: ("client_id", "client_secret", "refresh_token", "path"),
+    Kind.S3: ("endpoint_url", "bucket", "access_key_id", "secret_access_key"),
+}
+
+
+#: Fields a kind can use but does not need. Kept when given, dropped when blank,
+#: and marked as optional on the form — S3 is the first kind with a field that
+#: is genuinely a choice: the whole bucket or one prefix of it, and a region
+#: that only AWS insists on.
+OPTIONAL_FIELDS: dict[Kind, tuple[str, ...]] = {
+    Kind.S3: ("region", "prefix"),
 }
 
 
@@ -80,6 +94,11 @@ IDENTITY_FIELDS: dict[Kind, tuple[str, ...]] = {
     Kind.YANDEX: ("token", "path"),
     Kind.DROPBOX: ("app_key", "refresh_token", "path"),
     Kind.ONEDRIVE: ("client_id", "refresh_token", "path"),
+    # No credential in here, and it is the only kind that needs none: an
+    # endpoint, a bucket and a prefix name the place exactly, so two sets of
+    # keys to the same bucket are recognised as the same source rather than as
+    # two.
+    Kind.S3: ("endpoint_url", "bucket", "prefix"),
 }
 
 
@@ -99,15 +118,21 @@ def fingerprint(kind: Kind, config: dict[str, str]) -> str:
     return sha256(f"{kind.value}\n{material}".encode()).hexdigest()
 
 
+#: Fields that name a place inside a service rather than the service itself.
+_FOLDERS = ("path", "prefix")
+
+
 def _identity(field: str, value: str) -> str:
     """One identity value, in its canonical spelling.
 
     Only the folder fields need it: "/Документы", "Документы/" and "Документы"
     are one folder, and typing it a different way the second time must not buy a
     second copy of it. Credentials are left exactly as they are — a token is not
-    a path and has no spelling to normalise.
+    a path and has no spelling to normalise. An endpoint is left alone too: a
+    trailing slash there is already stripped by the field validation, and a host
+    is not a path.
     """
-    return value.strip().strip("/") if field == "path" else value
+    return value.strip().strip("/") if field in _FOLDERS else value
 
 
 @dataclass(frozen=True, slots=True)

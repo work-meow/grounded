@@ -32,6 +32,7 @@ def _document(document_id, filename, *, ready=True):
         source_id=str(uuid.uuid4()),
         filename=filename,
         web_url=None,
+        external_id=None,
         size_bytes=None,
         modified_at=1,
         ready=ready,

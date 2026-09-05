@@ -61,7 +61,10 @@ def describe(
     """The metadata for one remote document, in our shape.
 
     ``external_id`` is whatever the service calls the file and only has to be
-    stable there; :func:`document_id_for` turns it into an id stable here.
+    stable there; :func:`document_id_for` turns it into an id stable here. It is
+    carried through as well as hashed, because a source with no page to link to
+    — an object store — needs the API to be able to name the object again in
+    order to sign a link for it.
     """
     document_id = document_id_for(source_id, external_id)
     return {
@@ -70,6 +73,7 @@ def describe(
         "seen_at": int(time.time()),
         "web_url": web_url,
         "size": size,
+        "external_id": external_id,
     }
 
 

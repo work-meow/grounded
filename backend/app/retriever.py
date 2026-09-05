@@ -89,6 +89,11 @@ def openable(value: Any) -> str | None:
     return url if url.startswith(_OPENABLE) else None
 
 
+def _as_text(value: Any) -> str | None:
+    text = str(value).strip() if value is not None else ""
+    return text or None
+
+
 def _is_uuid(value: str) -> bool:
     try:
         UUID(value)
@@ -110,8 +115,13 @@ class IndexedDocument:
     source_id: str
     filename: str
     #: Where a person opens the original. None for uploads, which get a
-    #: presigned link to the bucket instead.
+    #: presigned link to the bucket instead, and None for an object store, which
+    #: has no page at all — that one is signed on demand from ``external_id``.
     web_url: str | None
+    #: What the far end calls this file: a Notion page id, a Drive file id, an
+    #: object key. Carried so a source with nothing to link to can still be
+    #: linked to.
+    external_id: str | None
     size_bytes: int | None
     #: When the far end last changed it. Stands in for "created" in the file
     #: list, which is the only date that means anything for a file we mirror.
@@ -197,6 +207,7 @@ async def indexed_documents(settings: Settings, user_id: UUID) -> list[IndexedDo
                 source_id=parsed["source_id"],
                 filename=parsed["filename"],
                 web_url=openable(entry.get("web_url")),
+                external_id=_as_text(entry.get("external_id")),
                 size_bytes=_as_int(entry.get("size")),
                 modified_at=_as_int(entry.get("modified_at")) or 0,
                 ready=entry.get("_indexing_status") == "INDEXED",

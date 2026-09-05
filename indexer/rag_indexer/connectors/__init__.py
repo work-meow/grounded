@@ -24,6 +24,7 @@ from rag_indexer.connectors.gdrive import GoogleDriveSource
 from rag_indexer.connectors.notion import NotionSource
 from rag_indexer.connectors.onedrive import OneDriveSource
 from rag_indexer.connectors.remote import RemoteSource, polling_table
+from rag_indexer.connectors.s3 import S3Source
 from rag_indexer.connectors.yandex import YandexSource
 
 logger = logging.getLogger(__name__)
@@ -36,6 +37,7 @@ _POLLED: dict[Kind, type[RemoteSource]] = {
     Kind.DROPBOX: DropboxSource,
     Kind.ONEDRIVE: OneDriveSource,
     Kind.YANDEX: YandexSource,
+    Kind.S3: S3Source,
 }
 
 

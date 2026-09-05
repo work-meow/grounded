@@ -7,6 +7,7 @@ from the index, which is what makes "is it searchable yet?" answerable at all.
 """
 
 import asyncio
+import logging
 import uuid
 from datetime import UTC, datetime
 from pathlib import PurePosixPath
@@ -14,16 +15,19 @@ from pathlib import PurePosixPath
 import httpx
 from fastapi import APIRouter, HTTPException, UploadFile, status
 from pydantic import BaseModel
+from rag_shared.connectors import Kind
 from rag_shared.doc_key import build_key
 from rag_shared.formats import HUMAN_READABLE, mime_for
 from sqlalchemy import delete as sql_delete
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app import pdf, retriever, storage
+from app import connectors, pdf, retriever, storage
 from app.config import Settings
 from app.deps import SessionDep, SettingsDep, UserDep
 from app.models import Document, Source
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/sources", tags=["sources"])
 
@@ -253,9 +257,61 @@ async def document_link(
         return {"url": await storage.presigned_url(settings, document.s3_key)}
 
     found = (await _indexed(settings, user_id)).get(str(document_id))
-    if found is None or not found.web_url:
+    if found is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Документ не найден")
-    return {"url": found.web_url}
+    if found.web_url:
+        return {"url": found.web_url}
+    if (signed := await _signed(settings, session, user_id, found)) is not None:
+        return {"url": signed}
+    raise HTTPException(
+        status.HTTP_404_NOT_FOUND, "У этого документа нет ссылки, которую можно открыть"
+    )
+
+
+async def _signed(
+    settings: Settings,
+    session: AsyncSession,
+    user_id: uuid.UUID,
+    found: retriever.IndexedDocument,
+) -> str | None:
+    """A link to an object in a connected store, or None if there is none to make.
+
+    An object store has no page to send anyone to, so the alternative to signing
+    is a citation chip that cannot be clicked. Signing needs the source's own
+    credentials, which is the one place in this API that opens a sealed config
+    for something other than writing the manifest — and it makes no request of
+    its own, so the endpoint being user-supplied is not a fetch this server
+    performs.
+    """
+    if not found.external_id:
+        return None
+    sealer = connectors.sealer(settings)
+    if sealer is None:
+        return None
+
+    source = (
+        await session.execute(
+            select(Source).where(
+                Source.id == uuid.UUID(found.source_id),
+                Source.user_id == user_id,
+                Source.kind == Kind.S3.value,
+            )
+        )
+    ).scalar_one_or_none()
+    if source is None or not source.sealed_config:
+        return None
+
+    try:
+        config = sealer.unseal(source.sealed_config)
+        url = await storage.foreign_presigned_url(config, found.external_id)
+    except Exception:
+        # A revoked key, an endpoint that has moved, a config sealed under an
+        # older secret. None of that is worth a failed request for a link.
+        logger.exception("could not sign a link for document %s", found.document_id)
+        return None
+    # The same rule every other link goes through: this one is built from a
+    # user-supplied endpoint, and it ends up in window.open.
+    return retriever.openable(url)
 
 
 @router.delete("/{document_id}", status_code=status.HTTP_204_NO_CONTENT)

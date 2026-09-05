@@ -21,6 +21,7 @@ from uuid import UUID
 
 from rag_shared.connectors import (
     MANIFEST_KEY,
+    OPTIONAL_FIELDS,
     REQUIRED_FIELDS,
     Kind,
     SealedSource,
@@ -29,6 +30,7 @@ from rag_shared.connectors import (
 from rag_shared.connectors import fingerprint as compute_fingerprint
 from rag_shared.crypto import InvalidToken, Sealer
 from rag_shared.health import HEALTH_KEY, SourceHealth, load_health
+from rag_shared.net import verify_public
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -61,20 +63,46 @@ def sealer(settings: Settings) -> Sealer | None:
 
 
 def clean_config(kind: Kind, config: dict[str, str]) -> dict[str, str]:
-    """Exactly the fields this kind needs, trimmed. Raises ValueError otherwise.
+    """Exactly the fields this kind uses, trimmed. Raises ValueError otherwise.
 
     Extra keys are dropped rather than refused: nothing would ever read them,
-    and keeping them would let the sealed blob grow without bound.
+    and keeping them would let the sealed blob grow without bound. An optional
+    field left blank is dropped the same way, so an absent value and an empty
+    one reach the indexer as the same thing.
     """
     cleaned: dict[str, str] = {}
     for field in REQUIRED_FIELDS[kind]:
-        value = str(config.get(field) or "").strip()
+        value = _field(field, config)
         if not value:
             raise ValueError(f"не заполнено поле «{field}»")
-        if len(value) > MAX_FIELD_LENGTH:
-            raise ValueError(f"поле «{field}» слишком длинное")
         cleaned[field] = value
+    for field in OPTIONAL_FIELDS.get(kind, ()):
+        if value := _field(field, config):
+            cleaned[field] = value
     return cleaned
+
+
+def _field(field: str, config: dict[str, str]) -> str:
+    value = str(config.get(field) or "").strip()
+    if len(value) > MAX_FIELD_LENGTH:
+        raise ValueError(f"поле «{field}» слишком длинное")
+    return value
+
+
+async def verify_endpoint(config: dict[str, str]) -> None:
+    """Refuse an address this server must not be made to fetch. Raises ValueError.
+
+    Only S3 has one, and it is the only field on any form that names a machine
+    rather than describing a place inside somebody else's service — see
+    rag_shared.net for why that is worth its own check.
+
+    In a thread, because resolving a name is a blocking call with its own
+    multi-second timeout and this runs on the loop that serves every other
+    request. Advisory rather than authoritative: the indexer checks again before
+    it connects, because that is the process that actually does the connecting.
+    """
+    if endpoint := config.get("endpoint_url"):
+        await asyncio.to_thread(verify_public, endpoint)
 
 
 async def backfill_fingerprints(sealer: Sealer, session: AsyncSession, user_id: UUID) -> None:

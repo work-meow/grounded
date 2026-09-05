@@ -14,6 +14,7 @@ from contextlib import asynccontextmanager
 import aioboto3
 from botocore.config import Config
 from botocore.exceptions import BotoCoreError, ClientError
+from rag_shared.s3 import addressing_style
 
 from app.config import Settings
 
@@ -85,6 +86,39 @@ async def get(settings: Settings, key: str) -> bytes | None:
 async def delete(settings: Settings, key: str) -> None:
     async with _client(settings) as client:
         await client.delete_object(Bucket=settings.s3_bucket, Key=key)
+
+
+async def foreign_presigned_url(config: dict[str, str], key: str, expires_in: int = 900) -> str:
+    """A link to an object in somebody else's store, signed with their keys.
+
+    For a connected S3 source, which has no page a browser could open: the
+    signature is the only way to hand the reader the file itself.
+
+    No request leaves this process. Signing is arithmetic over the key, the
+    endpoint and the secret — which is why the endpoint being user-supplied is
+    not a fetch this server can be made to perform. The browser is what opens
+    the result, and it opens it as the person sitting in front of it.
+    """
+    endpoint = config["endpoint_url"].rstrip("/")
+    async with _session.client(
+        "s3",
+        endpoint_url=endpoint,
+        region_name=config.get("region") or "us-east-1",
+        aws_access_key_id=config["access_key_id"],
+        aws_secret_access_key=config["secret_access_key"],
+        config=Config(
+            # The same rule the indexer reads by, from the same place: a link
+            # signed path-style against a host that wants the bucket in front
+            # of it is refused, and neither side can see that on its own.
+            s3={"addressing_style": addressing_style(endpoint)},
+            signature_version="s3v4",
+        ),
+    ) as client:
+        return await client.generate_presigned_url(
+            "get_object",
+            Params={"Bucket": config["bucket"], "Key": key},
+            ExpiresIn=expires_in,
+        )
 
 
 async def presigned_url(settings: Settings, key: str, expires_in: int = 900) -> str:

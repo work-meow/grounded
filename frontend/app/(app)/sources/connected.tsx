@@ -14,6 +14,7 @@ import { useCallback, useEffect, useState } from "react";
 import {
   Cloud,
   CloudUpload,
+  Database,
   HardDrive,
   Loader2,
   type LucideIcon,
@@ -108,6 +109,30 @@ const CATALOGUE: Record<ConnectorKind, Presentation> = {
       path: "Папка",
     },
     placeholders: { path: "/Документы" },
+  },
+  s3: {
+    label: "S3-хранилище",
+    icon: Database,
+    steps: () => [
+      "Подойдёт любое S3-совместимое хранилище: свой MinIO, Backblaze B2, Cloudflare R2, Wasabi, Selectel, VK Cloud, AWS.",
+      "В панели хранилища создайте ключ доступа с правом только на чтение нужного бакета.",
+      "Адрес — тот, что хранилище называет endpoint: например https://s3.us-west-004.backblazeb2.com или адрес вашего MinIO. Он должен быть доступен из интернета: на внутренний адрес сервер не пойдёт.",
+      "Регион нужен только AWS и некоторым провайдерам; префикс — если индексировать не весь бакет, а одну папку в нём.",
+    ],
+    labels: {
+      endpoint_url: "Адрес хранилища",
+      bucket: "Бакет",
+      access_key_id: "Access key ID",
+      secret_access_key: "Secret access key",
+      region: "Регион",
+      prefix: "Префикс",
+    },
+    placeholders: {
+      endpoint_url: "https://s3.us-west-004.backblazeb2.com",
+      bucket: "documents",
+      region: "us-east-1",
+      prefix: "договоры/",
+    },
   },
   onedrive: {
     label: "OneDrive",
@@ -255,6 +280,7 @@ export function ConnectedSources({ onChanged }: { onChanged: () => void }) {
           <AddForm
             kind={adding}
             fields={state.required_fields[adding] ?? []}
+            optional={state.optional_fields[adding] ?? []}
             serviceAccount={state.gdrive_service_account_email}
             onCancel={() => setAdding(null)}
             onAdded={() => {
@@ -360,12 +386,14 @@ function ago(iso: string | null): string {
 function AddForm({
   kind,
   fields,
+  optional,
   serviceAccount,
   onCancel,
   onAdded,
 }: {
   kind: ConnectorKind;
   fields: string[];
+  optional: string[];
   serviceAccount: string;
   onCancel: () => void;
   onAdded: () => void;
@@ -413,10 +441,14 @@ function AddForm({
             <Input value={name} onChange={(event) => setName(event.target.value)} required />
           </label>
 
-          {fields.map((field) => (
+          {/* Required first, then the rest: the server decides which is which,
+              so a field cannot end up marked one way here and enforced the
+              other way there. */}
+          {[...fields, ...optional].map((field) => (
             <label key={field} className="block space-y-1">
               <span className="text-xs text-muted-foreground">
                 {presentation.labels[field] ?? field}
+                {optional.includes(field) && " — необязательно"}
               </span>
               <Input
                 type={isSecret(field) ? "password" : "text"}
@@ -426,7 +458,7 @@ function AddForm({
                 onChange={(event) =>
                   setConfig((current) => ({ ...current, [field]: event.target.value }))
                 }
-                required
+                required={!optional.includes(field)}
               />
             </label>
           ))}

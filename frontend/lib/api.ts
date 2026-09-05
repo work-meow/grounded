@@ -126,7 +126,7 @@ export type SearchHit = {
 
 export type SearchOut = {
   hits: SearchHit[];
-  /** How long the index took. Worth showing: it is the point of this page. */
+  /** The whole lookup, embedding included. Worth showing: it is the point. */
   took_ms: number;
 };
 

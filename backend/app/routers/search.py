@@ -47,8 +47,11 @@ class Hit(BaseModel):
 
 class SearchOut(BaseModel):
     hits: list[Hit]
-    #: How long the index took. Shown, because a tenth of a second is the whole
-    #: argument for this page existing next to the chat.
+    #: The whole lookup, query embedding included — what the user actually
+    #: waited. Shown, because a tenth of a second is the entire argument for
+    #: this page existing next to the chat. It is the embedding that moves:
+    #: measured on the deployment, 50 ms when the query is cached upstream and
+    #: 400 ms when it is not.
     took_ms: int
 
 

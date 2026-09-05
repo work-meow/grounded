@@ -1,10 +1,11 @@
 "use client";
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { Loader2, Plus, SendHorizontal, Square, Trash2 } from "lucide-react";
+import { Loader2, PanelLeft, Plus, SendHorizontal, Square, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
+import { Sheet, SheetContent, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import { ApiError, api, ask, type ChatOut, type Citation, type MessageOut } from "@/lib/api";
@@ -52,6 +53,8 @@ export default function ChatPage() {
   // on its way. Null means the beginning of the conversation is already here.
   const [olderCursor, setOlderCursor] = useState<string | null>(null);
   const [loadingOlder, setLoadingOlder] = useState(false);
+  // The chat list, on a screen too narrow for it to live beside the messages.
+  const [drawer, setDrawer] = useState(false);
 
   // The stream only counts while its chat is the open one.
   const active = streaming?.chatId === activeId ? streaming : null;
@@ -281,43 +284,50 @@ export default function ChatPage() {
   return (
     <div className="flex flex-1 overflow-hidden">
       <aside className="hidden w-60 shrink-0 flex-col border-r md:flex">
-        <div className="p-3">
-          <Button onClick={newChat} className="w-full" variant="outline" size="sm">
-            <Plus className="size-4" />
-            Новый чат
-          </Button>
-        </div>
-        <div className="flex-1 space-y-1 overflow-y-auto px-2 pb-3">
-          {chats.map((chat) => (
-            <div
-              key={chat.id}
-              className={cn(
-                "group flex items-center gap-1 rounded-md pr-1 text-sm",
-                chat.id === activeId ? "bg-accent" : "hover:bg-accent/50",
-              )}
-            >
-              <button
-                onClick={() => setActiveId(chat.id)}
-                className="flex-1 truncate px-2 py-2 text-left"
-                title={chat.title}
-              >
-                {chat.title}
-              </button>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="size-7 opacity-0 group-hover:opacity-100"
-                onClick={() => removeChat(chat.id)}
-                aria-label={`Удалить чат «${chat.title}»`}
-              >
-                <Trash2 className="size-3.5" />
-              </Button>
-            </div>
-          ))}
-        </div>
+        <ChatList
+          chats={chats}
+          activeId={activeId}
+          onSelect={setActiveId}
+          onCreate={newChat}
+          onRemove={removeChat}
+        />
       </aside>
 
-      <section className="relative flex flex-1 flex-col overflow-hidden">
+      <section className="flex flex-1 flex-col overflow-hidden">
+        {/* Below md the sidebar is gone, and with it the only way to switch or
+            start a chat. This bar is what puts it back. */}
+        <div className="flex h-12 shrink-0 items-center gap-1 border-b px-2 md:hidden">
+          <Sheet open={drawer} onOpenChange={setDrawer}>
+            <SheetTrigger asChild>
+              <Button variant="ghost" size="icon" className="size-9" aria-label="Список чатов">
+                <PanelLeft className="size-4" />
+              </Button>
+            </SheetTrigger>
+            <SheetContent>
+              <SheetTitle className="px-4 pt-4">Чаты</SheetTitle>
+              <ChatList
+                chats={chats}
+                activeId={activeId}
+                onSelect={(id) => {
+                  setActiveId(id);
+                  setDrawer(false);
+                }}
+                onCreate={async () => {
+                  await newChat();
+                  setDrawer(false);
+                }}
+                // Deleting does not close it: removing several in a row is the
+                // reason somebody opens this list in the first place.
+                onRemove={removeChat}
+              />
+            </SheetContent>
+          </Sheet>
+          <p className="min-w-0 flex-1 truncate text-sm font-medium">
+            {chats.find((chat) => chat.id === activeId)?.title ?? "Чат"}
+          </p>
+        </div>
+
+        <div className="relative flex flex-1 flex-col overflow-hidden">
         {loadingOlder && (
           // Out of the flow on purpose: anything that took up space here would
           // change the scroll height between measuring it and restoring it.
@@ -365,6 +375,7 @@ export default function ChatPage() {
             <div ref={bottomRef} />
           </div>
         </div>
+        </div>
 
         <div className="border-t p-3 sm:p-4">
           <div className="mx-auto flex w-full max-w-3xl items-end gap-2">
@@ -407,6 +418,61 @@ export default function ChatPage() {
         </div>
       </section>
     </div>
+  );
+}
+
+function ChatList({
+  chats,
+  activeId,
+  onSelect,
+  onCreate,
+  onRemove,
+}: {
+  chats: ChatOut[];
+  activeId: string | null;
+  onSelect: (id: string) => void;
+  onCreate: () => void | Promise<void>;
+  onRemove: (id: string) => void;
+}) {
+  return (
+    <>
+      <div className="p-3">
+        <Button onClick={() => void onCreate()} className="w-full" variant="outline" size="sm">
+          <Plus className="size-4" />
+          Новый чат
+        </Button>
+      </div>
+      <div className="flex-1 space-y-1 overflow-y-auto px-2 pb-3">
+        {chats.map((chat) => (
+          <div
+            key={chat.id}
+            className={cn(
+              "group flex items-center gap-1 rounded-md pr-1 text-sm",
+              chat.id === activeId ? "bg-accent" : "hover:bg-accent/50",
+            )}
+          >
+            <button
+              onClick={() => onSelect(chat.id)}
+              className="flex-1 truncate px-2 py-2 text-left"
+              title={chat.title}
+            >
+              {chat.title}
+            </button>
+            <Button
+              variant="ghost"
+              size="icon"
+              // Always reachable on a touch screen, where there is no hover to
+              // reveal it with.
+              className="size-7 opacity-100 transition-opacity md:opacity-0 md:group-hover:opacity-100 md:focus-visible:opacity-100"
+              onClick={() => onRemove(chat.id)}
+              aria-label={`Удалить чат «${chat.title}»`}
+            >
+              <Trash2 className="size-3.5" />
+            </Button>
+          </div>
+        ))}
+      </div>
+    </>
   );
 }
 

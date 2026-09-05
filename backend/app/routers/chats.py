@@ -5,11 +5,11 @@ from collections.abc import AsyncIterator
 from datetime import datetime
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import delete as sql_delete
-from sqlalchemy import select
+from sqlalchemy import select, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import agent
@@ -21,6 +21,11 @@ from app.models import Chat, Message
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/chats", tags=["chats"])
+
+#: Messages per page. A turn is a pair, so this is twenty-five exchanges —
+#: comfortably more than one screen, and small enough that opening a chat that
+#: has been going for a year is the same query as opening one from this morning.
+MESSAGE_PAGE = 50
 
 
 class ChatOut(BaseModel):
@@ -35,6 +40,20 @@ class MessageOut(BaseModel):
     content: str
     citations: list[dict[str, Any]]
     created_at: datetime
+
+
+class MessagesOut(BaseModel):
+    """One page of a chat, oldest message first.
+
+    A page is always read backwards from somewhere — the end of the chat, or the
+    cursor of the page before — and then handed over in reading order, because
+    that is the order it is rendered in.
+    """
+
+    messages: list[MessageOut]
+    #: Pass back as ``before`` to get the page of older messages. None once the
+    #: beginning of the chat is on screen.
+    next_cursor: str | None
 
 
 class AskRequest(BaseModel):
@@ -73,28 +92,74 @@ async def delete_chat(chat_id: uuid.UUID, user_id: UserDep, session: SessionDep)
 
 @router.get("/{chat_id}/messages")
 async def list_messages(
-    chat_id: uuid.UUID, user_id: UserDep, session: SessionDep
-) -> list[MessageOut]:
+    chat_id: uuid.UUID,
+    user_id: UserDep,
+    session: SessionDep,
+    before: str | None = None,
+    limit: int = Query(MESSAGE_PAGE, ge=1, le=200),
+) -> MessagesOut:
+    """The end of the chat, or the page of messages older than ``before``.
+
+    The end, because that is what a chat is opened to read: the last thing said.
+    Everything before it is fetched as the reader scrolls back, which is the
+    difference between opening a long conversation and downloading it.
+
+    Keyset, not OFFSET. The pages are walked in order and a chat grows at the
+    end, so an offset would be both slower with every page and wrong whenever a
+    message arrived mid-scroll — the row it counted from would have moved.
+    """
     await _owned_chat(session, user_id, chat_id)
+
+    query = select(Message).where(Message.chat_id == chat_id)
+    if before is not None:
+        query = query.where(tuple_(Message.created_at, Message.id) < _cursor(before))
     rows = (
         (
             await session.execute(
-                select(Message).where(Message.chat_id == chat_id).order_by(Message.created_at)
+                # One more than asked for: whether that row exists is the whole
+                # answer to "is there anything older", and it costs nothing.
+                query.order_by(Message.created_at.desc(), Message.id.desc()).limit(limit + 1)
             )
         )
         .scalars()
         .all()
     )
-    return [
-        MessageOut(
-            id=m.id,
-            role=m.role,
-            content=m.content,
-            citations=m.citations,
-            created_at=m.created_at,
-        )
-        for m in rows
-    ]
+
+    page = list(reversed(rows[:limit]))
+    return MessagesOut(
+        messages=[
+            MessageOut(
+                id=m.id,
+                role=m.role,
+                content=m.content,
+                citations=m.citations,
+                created_at=m.created_at,
+            )
+            for m in page
+        ],
+        next_cursor=_encode(page[0]) if page and len(rows) > limit else None,
+    )
+
+
+def _encode(message: Message) -> str:
+    """A cursor: where this page starts, precisely enough to resume from.
+
+    The id is a tiebreaker for the timestamp, which is only ever needed if two
+    messages landed in the same microsecond. Ordering uuids is not a thing
+    Postgres and Python agree on in general, but both sides only ever compare
+    values this function produced, and only within one such tie.
+    """
+    return f"{message.created_at.isoformat()}|{message.id}"
+
+
+def _cursor(raw: str) -> tuple[datetime, uuid.UUID]:
+    created_at, _, message_id = raw.partition("|")
+    try:
+        return datetime.fromisoformat(created_at), uuid.UUID(message_id)
+    except ValueError as exc:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY, "Некорректная позиция в истории"
+        ) from exc
 
 
 @router.post("/{chat_id}/messages")

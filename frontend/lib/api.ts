@@ -111,6 +111,13 @@ export type ConnectorsOut = {
 
 export type ChatOut = { id: string; title: string; created_at: string };
 
+/** One page of a chat, oldest first. */
+export type MessagesPage = {
+  messages: MessageOut[];
+  /** Pass back as `before` for the page above this one. Null at the start. */
+  next_cursor: string | null;
+};
+
 export type MessageOut = {
   id: string;
   role: "user" | "assistant";
@@ -157,7 +164,11 @@ export const api = {
   chats: () => request<ChatOut[]>("/api/chats"),
   createChat: () => request<ChatOut>("/api/chats", { method: "POST" }),
   deleteChat: (id: string) => request<void>(`/api/chats/${id}`, { method: "DELETE" }),
-  messages: (chatId: string) => request<MessageOut[]>(`/api/chats/${chatId}/messages`),
+  /** The end of the chat, or — given a cursor — the page just before it. */
+  messages: (chatId: string, before?: string) =>
+    request<MessagesPage>(
+      `/api/chats/${chatId}/messages${before ? `?before=${encodeURIComponent(before)}` : ""}`,
+    ),
 };
 
 // --- streaming ---------------------------------------------------------------

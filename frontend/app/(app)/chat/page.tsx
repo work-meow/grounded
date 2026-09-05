@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Loader2, Plus, SendHorizontal, Square, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -9,6 +9,14 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import { ApiError, api, ask, type ChatOut, type Citation, type MessageOut } from "@/lib/api";
 import { cn } from "@/lib/utils";
+
+/**
+ * How close to the top counts as asking for the page above.
+ *
+ * A screen height would fetch before anyone had read anything; zero would only
+ * fetch once the reader had already hit the wall and seen nothing happen.
+ */
+const LOAD_OLDER_PX = 300;
 
 export default function ChatPage() {
   const [chats, setChats] = useState<ChatOut[]>([]);
@@ -23,16 +31,35 @@ export default function ChatPage() {
     citations: Citation[];
   } | null>(null);
   const [loading, setLoading] = useState(true);
+  // Where the chat continues above what is on screen, and whether that page is
+  // on its way. Null means the beginning of the conversation is already here.
+  const [olderCursor, setOlderCursor] = useState<string | null>(null);
+  const [loadingOlder, setLoadingOlder] = useState(false);
 
   // The stream only counts while its chat is the open one.
   const active = streaming?.chatId === activeId ? streaming : null;
 
   const bottomRef = useRef<HTMLDivElement>(null);
+  const viewportRef = useRef<HTMLDivElement>(null);
+  // The scroll height measured just before a page of older messages goes in.
+  // Set means "keep the reader where they were" rather than "follow the end".
+  const restoreFrom = useRef<number | null>(null);
+  // A chat is opened at its end without animating there from wherever the last
+  // one was; only new messages arriving are worth sliding to.
+  const jumpToEnd = useRef(false);
+  // Guards the fetch against being started twice by consecutive scroll events,
+  // which fire far faster than a request comes back.
+  const fetchingOlder = useRef(false);
+  // Read after an await to tell whether the chat is still the one that asked.
+  const activeIdRef = useRef<string | null>(null);
   // Aborts the answer in flight when the chat is switched or the page unmounts,
   // so a stream cannot outlive the view that asked for it.
   const inFlight = useRef<AbortController | null>(null);
 
   useEffect(() => () => inFlight.current?.abort(), []);
+  useEffect(() => {
+    activeIdRef.current = activeId;
+  }, [activeId]);
 
   // Load the chat list once, opening the newest chat or creating the first one.
   useEffect(() => {
@@ -67,15 +94,58 @@ export default function ChatPage() {
     let cancelled = false;
     api
       .messages(activeId)
-      .then((loaded) => !cancelled && setMessages(loaded))
+      .then((page) => {
+        if (cancelled) return;
+        // A chat opens on its last page, at the bottom, the way every other
+        // chat program opens: the newest thing said is the thing you came back
+        // for. Everything before it is fetched when it is scrolled towards.
+        jumpToEnd.current = true;
+        setMessages(page.messages);
+        setOlderCursor(page.next_cursor);
+      })
       .catch((cause) => !cancelled && toast.error(describe(cause)));
     return () => {
       cancelled = true;
     };
   }, [activeId]);
 
-  useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+  const loadOlder = useCallback(async () => {
+    const chatId = activeId;
+    if (!chatId || !olderCursor || fetchingOlder.current) return;
+
+    fetchingOlder.current = true;
+    setLoadingOlder(true);
+    try {
+      const page = await api.messages(chatId, olderCursor);
+      // Prepending a page fetched for a chat the reader has since left would
+      // splice one conversation into another.
+      if (activeIdRef.current !== chatId) return;
+      // Measured now, used once the taller list has been laid out.
+      restoreFrom.current = viewportRef.current?.scrollHeight ?? null;
+      setMessages((current) => [...page.messages, ...current]);
+      setOlderCursor(page.next_cursor);
+    } catch (cause) {
+      toast.error(describe(cause));
+    } finally {
+      fetchingOlder.current = false;
+      setLoadingOlder(false);
+    }
+  }, [activeId, olderCursor]);
+
+  // Layout, not effect: both branches move the scroll position, and doing that
+  // after the browser has painted the new list is a visible jump.
+  useLayoutEffect(() => {
+    const viewport = viewportRef.current;
+    if (restoreFrom.current !== null && viewport) {
+      // Older messages went in above. Growing the list upward would otherwise
+      // carry the message being read off the bottom of the screen; this keeps
+      // it exactly where it was.
+      viewport.scrollTop += viewport.scrollHeight - restoreFrom.current;
+      restoreFrom.current = null;
+      return;
+    }
+    bottomRef.current?.scrollIntoView({ behavior: jumpToEnd.current ? "auto" : "smooth" });
+    jumpToEnd.current = false;
   }, [messages, active?.text]);
 
   const send = useCallback(async () => {
@@ -150,6 +220,11 @@ export default function ChatPage() {
     api.chats().then(setChats).catch(() => undefined);
   }, [activeId, draft, active]);
 
+  const onScroll = useCallback(() => {
+    const viewport = viewportRef.current;
+    if (viewport && viewport.scrollTop <= LOAD_OLDER_PX) void loadOlder();
+  }, [loadOlder]);
+
   // The answer keeps streaming on the server; this stops waiting for it and
   // keeps what has already arrived.
   const stop = useCallback(() => inFlight.current?.abort(), []);
@@ -160,6 +235,7 @@ export default function ChatPage() {
       setChats((current) => [chat, ...current]);
       setActiveId(chat.id);
       setMessages([]);
+      setOlderCursor(null);
     } catch (cause) {
       toast.error(describe(cause));
     }
@@ -173,6 +249,7 @@ export default function ChatPage() {
       if (activeId === id) {
         setActiveId(remaining[0]?.id ?? null);
         setMessages([]);
+        setOlderCursor(null);
       }
     } catch (cause) {
       toast.error(describe(cause));
@@ -218,8 +295,25 @@ export default function ChatPage() {
         </div>
       </aside>
 
-      <section className="flex flex-1 flex-col overflow-hidden">
-        <div className="flex-1 overflow-y-auto">
+      <section className="relative flex flex-1 flex-col overflow-hidden">
+        {loadingOlder && (
+          // Out of the flow on purpose: anything that took up space here would
+          // change the scroll height between measuring it and restoring it.
+          <div className="pointer-events-none absolute inset-x-0 top-2 z-10 flex justify-center">
+            <span className="rounded-full border bg-background px-2 py-1 shadow-sm">
+              <Loader2 className="size-4 animate-spin text-muted-foreground" />
+            </span>
+          </div>
+        )}
+        <div
+          ref={viewportRef}
+          onScroll={onScroll}
+          className="flex-1 overflow-y-auto"
+          // The browser's own scroll anchoring would move the same scroll
+          // position this component adjusts by hand, and the two together
+          // overshoot.
+          style={{ overflowAnchor: "none" }}
+        >
           <div className="mx-auto flex w-full max-w-3xl flex-col gap-6 p-4 sm:p-6">
             {loading ? (
               <Skeleton className="h-20 w-full" />

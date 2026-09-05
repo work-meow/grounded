@@ -243,6 +243,21 @@ jobs:
           echo "--- both populations still list"
           test "$(api localhost:8000/api/sources)" = 200
 
+          echo "--- a chat pages from its end"
+          test "$(api -X POST localhost:8000/api/chats)" = 201
+          chat=$(python3 -c "import json;print(json.load(open('/tmp/body'))['id'])")
+          test "$(api "localhost:8000/api/chats/$chat/messages?limit=1")" = 200
+          python3 -c "
+          import json
+          page = json.load(open('/tmp/body'))
+          assert page == {'messages': [], 'next_cursor': None}, page
+          print('empty page:', page)
+          "
+          # A cursor is a position, not free text: one that is not one is a bad
+          # request rather than a 500 out of the query builder.
+          test "$(api "localhost:8000/api/chats/$chat/messages?before=nonsense")" = 422
+          test "$(api -X DELETE "localhost:8000/api/chats/$chat")" = 204
+
           echo "--- disconnect"
           test "$(api -X DELETE "localhost:8000/api/connectors/$id")" = 204
           test "$(api -X DELETE "localhost:8000/api/connectors/$id")" = 404

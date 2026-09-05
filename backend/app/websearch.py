@@ -10,14 +10,29 @@ gets the query, does the searching, and comes back with a grounded summary plus
 the pages it read. That means one request rather than a search API, a scraper
 and a summariser of our own.
 
-Two things were measured before being settled on, both against the same query:
+Three things were measured before being settled on, not read off a page:
 
 * Gemini has **no** native search on OpenRouter — the request is refused with a
   404 naming the models that do. So an external engine it is.
 * Parallel in turbo mode costs $0.00125 a call against Exa's $0.0072, comes
   back in 2.2 s against 3.3 s, and returns more text per source (400–3000
-  characters against 150–1700). Nearly six times cheaper and better, so it is
-  the default.
+  characters against 150–1700). Nearly six times cheaper and better.
+* The ``plugins`` form beats the newer ``tools: [{"type":
+  "openrouter:web_search"}]`` one, which is the interesting result, because the
+  tool form is what the documentation now recommends. Across six questions with
+  a checkable answer, the plugin was right six times; the tool form got the
+  central bank's rate and today's own date wrong, and twice answered with no
+  sources at all and a bill of four thousandths of a cent — it simply decided
+  not to search.
+
+That last one is not really about search quality. Under ``plugins`` the search
+happens before the model runs; under ``tools`` it is the model's decision, and
+this is a small cheap model being asked to second-guess a decision that has
+already been made. By the time this module is called, the agent has decided a
+web search is warranted — visibly, as a step on screen, against a ceiling — and
+handing that judgement back down to a cheaper model is both redundant and worse.
+It would also take the queries off the screen, which is most of what makes the
+agent legible while it works.
 
 A small model does the searching — the agent above it is what writes the
 answer, and it only needs the findings.

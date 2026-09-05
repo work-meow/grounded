@@ -10,7 +10,7 @@ from uuid import UUID
 import httpx
 import pytest
 
-from app import retriever
+from app import http, retriever
 from app.config import Settings
 
 ALICE = UUID("11111111-1111-1111-1111-111111111111")
@@ -32,9 +32,9 @@ def flaky_indexer(request):
             raise httpx.RemoteProtocolError("Server disconnected without sending a response.")
         return httpx.Response(200, json=payload)
 
-    retriever.set_client(httpx.AsyncClient(transport=httpx.MockTransport(handler)))
+    http.set_client(httpx.AsyncClient(transport=httpx.MockTransport(handler)))
     yield calls
-    retriever.set_client(None)
+    http.set_client(None)
 
 
 HIT = [{"text": "срок уведомления — 45 дней", "dist": 0.1, "metadata": {"page_number": 3}}]

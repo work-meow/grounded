@@ -13,7 +13,7 @@ import httpx
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app import retriever
+from app import http
 from app.config import get_settings
 from app.db import engine
 from app.routers import auth, chats, connectors, search, sources
@@ -24,11 +24,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # try/finally, not a plain sequence: a failure during shutdown would
     # otherwise skip the teardown and leak the connection pool.
     async with httpx.AsyncClient() as client:
-        retriever.set_client(client)
+        http.set_client(client)
         try:
             yield
         finally:
-            retriever.set_client(None)
+            http.set_client(None)
             await engine.dispose()
 
 

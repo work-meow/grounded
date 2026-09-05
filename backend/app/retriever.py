@@ -12,22 +12,8 @@ from uuid import UUID
 import httpx
 from rag_shared.doc_key import parse_key, user_prefix
 
+from app import http
 from app.config import Settings
-
-_client: httpx.AsyncClient | None = None
-
-
-def set_client(client: httpx.AsyncClient | None) -> None:
-    """Wired up by the app lifespan so connections are pooled."""
-    global _client
-    _client = client
-
-
-def _http() -> httpx.AsyncClient:
-    if _client is None:  # pragma: no cover - misconfiguration, not a runtime path
-        raise RuntimeError("retriever client is not initialised")
-    return _client
-
 
 # A pooled connection the indexer has already closed fails on first use, before
 # the request is written: httpx reports RemoteProtocolError, and the caller sees
@@ -47,7 +33,7 @@ async def _post(settings: Settings, path: str, payload: dict[str, Any]) -> Any:
     attempts = 2
     for attempt in range(1, attempts + 1):
         try:
-            response = await _http().post(
+            response = await http.client().post(
                 f"{settings.pathway_url}{path}",
                 json=payload,
                 timeout=settings.pathway_timeout_s,

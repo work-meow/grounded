@@ -39,9 +39,8 @@ SYSTEM_PROMPT = """\
   другой формулировкой (синонимы, точные термины, без вопросительных слов).
 - Действуй молча: не спрашивай разрешения, не описывай, что собираешься
   сделать, и не предлагай пользователю список вариантов. Либо ищи, либо отвечай.
-- Если и после этого ничего нет — одной фразой скажи, что в базе этого нет.
-  Сноска на нерелевантный фрагмент — это ложная ссылка: когда ответа нет,
-  сносок тоже нет.
+- Если и после этого ничего нет — одной фразой скажи об этом. Сноска на
+  нерелевантный фрагмент — это ложная ссылка: когда ответа нет, сносок тоже нет.
 - Ссылайся на источники в тексте как [1], [2] — их нумерация совпадает с той,
   что возвращают инструменты.
 - Отвечай на языке вопроса, кратко и по существу.
@@ -54,13 +53,17 @@ SYSTEM_PROMPT = """\
 #: naming a tool that is not bound is how a model ends up apologising for not
 #: calling it.
 WEB_RULES = """\
-- База знаний — первая. Если ответа в ней нет, или вопрос про внешний мир и
-  сегодняшний день (курсы, цены, новости, законы, факты о ком-то) — вызови
-  search_web.
+- Поиск в сети включён, и порядок такой. Вопрос про содержимое документов
+  пользователя — search_knowledge. Вопрос про внешний мир и сегодняшний день
+  (курсы, ставки, новости, цены, законы, люди, события) — сразу search_web, не
+  тратя поиск по базе.
+- Никогда не отвечай «в базе этого нет», не вызвав search_web: он включён ровно
+  для таких случаев. Правило выше про «скажи одной фразой» относится к базе, а
+  не к концу разговора.
 - Результаты из сети нумеруются вместе с фрагментами из базы: ссылайся на них
   так же, как [1], [2], и не приписывай в конце свой список источников —
   интерфейс показывает их сам, отдельными ссылками.
-- Если и в сети ничего не нашлось, скажи об этом прямо."""
+- Если и в сети ничего не нашлось, тогда скажи об этом прямо."""
 
 
 #: Written out rather than taken from a locale. Russian month names need the
@@ -188,7 +191,9 @@ class _Citations:
         return [item for item in self.items if item["n"] in cited]
 
 
-def _render(query: str, chunks: list[retriever.Chunk], citations: _Citations) -> str:
+def _render(
+    query: str, chunks: list[retriever.Chunk], citations: _Citations, web: bool = False
+) -> str:
     """Fragments as the model sees them, with what they are said plainly.
 
     The header is not decoration. The index is a ranked retriever: it returns
@@ -200,13 +205,12 @@ def _render(query: str, chunks: list[retriever.Chunk], citations: _Citations) ->
     what turns one search into a loop worth having.
     """
     if not chunks:
-        return f"По запросу «{query}» ничего не найдено. Попробуй другую формулировку."
+        return f"По запросу «{query}» ничего не найдено. {_next_move(web)}"
     lines = [
         f"Лучшие {len(chunks)} фрагмент(ов) индекса по запросу «{query}». "
         "Это ранжированная выдача, а не совпадения: среди них может не быть "
         "подходящих. Если ни один не отвечает на вопрос — молча вызови поиск "
-        "ещё раз с другой формулировкой. Если и тогда ничего — ответь одной "
-        "фразой, что в базе этого нет, без сносок."
+        f"ещё раз с другой формулировкой. {_next_move(web)}"
     ]
     for chunk in chunks:
         number = citations.add(chunk)
@@ -215,6 +219,21 @@ def _render(query: str, chunks: list[retriever.Chunk], citations: _Citations) ->
             where += f", стр. {chunk.page}"
         lines.append(f"[{number}] ({where})\n{chunk.text}")
     return "\n\n".join(lines)
+
+
+def _next_move(web: bool) -> str:
+    """What to do when the knowledge base has come up empty twice.
+
+    It has to be said here, in the tool result, and not only in the system
+    prompt: this is the sentence the model is reading at the moment it decides,
+    and measured on the deployment it is the one that wins. With the web
+    enabled and only the prompt saying so, the agent searched the documents
+    twice and answered "в базе этого нет" without ever going online — which is
+    the one thing the person had just asked it not to do.
+    """
+    if web:
+        return "Если и тогда ничего — вызови search_web, а не отвечай, что ничего нет."
+    return "Если и тогда ничего — ответь одной фразой, что в базе этого нет, без сносок."
 
 
 def _render_web(found: websearch.Result, citations: _Citations) -> str:
@@ -245,7 +264,7 @@ def _build_tools(
             query: Поисковый запрос на естественном языке.
         """
         chunks = await retriever.retrieve(settings, user_id, query, settings.retrieve_k)
-        return _render(query, chunks, citations)
+        return _render(query, chunks, citations, web)
 
     @tool
     async def list_sources() -> str:
@@ -290,7 +309,7 @@ def _build_tools(
         chunks = await retriever.retrieve(
             settings, user_id, query, settings.retrieve_k, document_id=target
         )
-        return _render(query, chunks, citations)
+        return _render(query, chunks, citations, web)
 
     @tool
     async def search_web(query: str) -> str:

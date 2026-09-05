@@ -102,7 +102,10 @@ class Settings(BaseSettings):
     # text per source. Gemini has no native search on OpenRouter at all — that
     # request is refused outright — so an external engine is the only option.
     web_search_engine: str = "parallel"
-    web_search_results: int = 4
+    # Parallel charges by request, not by result, so asking for more costs
+    # nothing and raises the odds that at least one page has real text on it
+    # rather than a navigation menu.
+    web_search_results: int = 6
     # Its own budget, inside the turn's. A slow search must not eat the whole
     # answer: the agent can still reply from the knowledge base without it.
     web_search_timeout_s: float = 30.0

@@ -54,6 +54,14 @@ logger = logging.getLogger(__name__)
 #: almost always near the top of what the search engine chose to return.
 SOURCE_CHARS = 1200
 
+#: Below this, a "source" is a page's navigation and its title, not its
+#: contents. Measured on a live search: cbr.ru's key-rate page came back as a
+#: bare list of meeting dates with no rates in it, and another as twenty-four
+#: characters of heading. Handed those as evidence, the agent answered with a
+#: number that appears in none of them — near-empty sources are not neutral,
+#: they are an invitation to fill the gap.
+MIN_SOURCE_CHARS = 200
+
 #: A ceiling on the searching model's own answer. It is relaying findings, not
 #: writing the reply, so a long one is tokens spent on prose nobody reads.
 SUMMARY_TOKENS = 700
@@ -140,12 +148,15 @@ def _result(body: Any) -> Result:
         url = retriever.openable(citation.get("url"))
         if url is None or url in seen:
             continue
+        text = " ".join(str(citation.get("content") or "").split())
+        if len(text) < MIN_SOURCE_CHARS:
+            continue
         seen.add(url)
         sources.append(
             Source(
                 url=url,
                 title=str(citation.get("title") or "").strip() or host(url),
-                text=" ".join(str(citation.get("content") or "").split())[:SOURCE_CHARS],
+                text=text[:SOURCE_CHARS],
             )
         )
 

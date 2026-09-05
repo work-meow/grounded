@@ -18,6 +18,9 @@ from app.config import Settings
 
 USER = uuid.UUID("11111111-1111-1111-1111-111111111111")
 
+#: Long enough to count as a page with something on it rather than its menu.
+_LONG = "Достаточно длинный текст страницы, на котором можно что-то основывать. " * 5
+
 
 def settings(**overrides) -> Settings:
     return Settings(jwt_secret="x" * 40, openrouter_api_key="k", **overrides)
@@ -37,7 +40,14 @@ def _body(content: str = "Курс 86,58 рубля.", annotations: list | None 
                             "url_citation": {
                                 "url": "https://www.cbr.ru/currency/",
                                 "title": "Официальные курсы валют",
-                                "content": "Курс доллара США на 5 сентября — 86,5857 рубля.",
+                                "content": (
+                                    "Курс доллара США на 5 сентября — 86,5857 рубля. "
+                                    "Официальный курс устанавливается Банком России "
+                                    "ежедневно по рабочим дням на основе котировок "
+                                    "межбанковского рынка и вступает в силу со "
+                                    "следующего календарного дня. "
+                                )
+                                * 2,
                             },
                         }
                     ],
@@ -99,7 +109,11 @@ async def test_a_link_that_is_not_a_link_is_dropped(openrouter):
                     },
                     {
                         "type": "url_citation",
-                        "url_citation": {"url": "https://ok.test/a", "title": "x", "content": "y"},
+                        "url_citation": {
+                            "url": "https://ok.test/a",
+                            "title": "x",
+                            "content": _LONG,
+                        },
                     },
                 ]
             )
@@ -114,7 +128,7 @@ async def test_a_link_that_is_not_a_link_is_dropped(openrouter):
 async def test_the_same_page_twice_is_one_source(openrouter):
     same = {
         "type": "url_citation",
-        "url_citation": {"url": "https://ok.test/a", "title": "x", "content": "y"},
+        "url_citation": {"url": "https://ok.test/a", "title": "x", "content": _LONG},
     }
     openrouter(_returning(_body(annotations=[same, same])))
 
@@ -155,6 +169,42 @@ async def test_a_source_is_trimmed_before_it_reaches_the_agent(openrouter):
     (source,) = (await websearch.search(settings(), "q")).sources
 
     assert len(source.text) == websearch.SOURCE_CHARS
+
+
+async def test_a_page_that_came_back_as_its_own_menu_is_not_a_source(openrouter):
+    """Measured live: cbr.ru's key-rate page arrived as a bare list of meeting
+    dates with no rates in it, and another as twenty-four characters of
+    heading. Handed those as evidence, the agent answered with a number that
+    appeared in none of them. A near-empty source is not neutral — it is an
+    invitation to fill the gap."""
+    openrouter(
+        _returning(
+            _body(
+                annotations=[
+                    {
+                        "type": "url_citation",
+                        "url_citation": {
+                            "url": "https://cbr.ru/key",
+                            "title": "Ключевая ставка Банка России",
+                            "content": "Ключевая ставка Банка России",
+                        },
+                    },
+                    {
+                        "type": "url_citation",
+                        "url_citation": {
+                            "url": "https://cbr.ru/press",
+                            "title": "Пресс-релиз",
+                            "content": _LONG,
+                        },
+                    },
+                ]
+            )
+        )
+    )
+
+    found = await websearch.search(settings(), "ключевая ставка")
+
+    assert [source.url for source in found.sources] == ["https://cbr.ru/press"]
 
 
 @pytest.mark.parametrize(

@@ -24,7 +24,11 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       lang="ru"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
-      <body className="min-h-full flex flex-col">
+      {/* The app is a shell, not a document: exactly the viewport tall, and it
+          does not scroll. Every scrollable region inside owns its own scroll
+          bar. With `min-h-full` here instead, a long chat list grew the body
+          and took the header, the navigation and the composer with it. */}
+      <body className="flex h-dvh flex-col overflow-hidden">
         {children}
         <Toaster position="top-center" />
       </body>

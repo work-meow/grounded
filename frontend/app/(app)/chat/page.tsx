@@ -402,7 +402,7 @@ export default function ChatPage() {
           </div>
         </div>
 
-        <div className="border-t p-3 sm:p-4">
+        <div className="shrink-0 border-t p-3 sm:p-4">
           <div className="mx-auto flex w-full max-w-3xl items-end gap-2">
             <Tools web={web} onToggle={setWeb} />
             <Textarea
@@ -462,7 +462,7 @@ function ChatList({
 }) {
   return (
     <>
-      <div className="p-3">
+      <div className="shrink-0 p-3">
         <Button onClick={() => void onCreate()} className="w-full" variant="outline" size="sm">
           <Plus className="size-4" />
           Новый чат

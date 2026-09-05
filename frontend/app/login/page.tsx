@@ -32,7 +32,9 @@ export default function LoginPage() {
   }
 
   return (
-    <main className="flex flex-1 items-center justify-center p-6">
+    // Its own scroll: the shell around it no longer scrolls, and this card is
+    // taller than a phone in landscape with the keyboard up.
+    <main className="flex flex-1 items-center justify-center overflow-y-auto p-6">
       <Card className="w-full max-w-md">
         <CardHeader>
           <div className="flex size-10 items-center justify-center rounded-lg bg-primary/10 text-primary">

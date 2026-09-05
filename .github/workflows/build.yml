@@ -234,6 +234,12 @@ jobs:
           print('status:', source['status'])
           "
 
+          echo "--- the same source cannot be connected twice"
+          test "$(api -X POST localhost:8000/api/connectors \
+                    -H 'Content-Type: application/json' \
+                    -d '{"kind":"notion","name":"another name","config":{"token":"ntn_smoke"}}')" = 409
+          cat /tmp/body
+
           echo "--- both populations still list"
           test "$(api localhost:8000/api/sources)" = 200
 

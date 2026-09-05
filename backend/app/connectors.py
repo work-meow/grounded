@@ -26,7 +26,8 @@ from rag_shared.connectors import (
     SealedSource,
     dump_manifest,
 )
-from rag_shared.crypto import Sealer
+from rag_shared.connectors import fingerprint as compute_fingerprint
+from rag_shared.crypto import InvalidToken, Sealer
 from rag_shared.health import HEALTH_KEY, SourceHealth, load_health
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -74,6 +75,52 @@ def clean_config(kind: Kind, config: dict[str, str]) -> dict[str, str]:
             raise ValueError(f"поле «{field}» слишком длинное")
         cleaned[field] = value
     return cleaned
+
+
+async def backfill_fingerprints(sealer: Sealer, session: AsyncSession, user_id: UUID) -> None:
+    """Give this user's older sources the fingerprint they were connected without.
+
+    A fingerprint is what makes "this source is already connected" a question
+    the database can answer, and sources predating that check have none — which
+    makes them exactly the ones a user could still duplicate. It cannot be done
+    in the migration: computing one means opening a sealed config, and only a
+    process holding SECRETS_KEY can do that.
+
+    A pair that is *already* a duplicate is left alone rather than fixed. There
+    is no honest way to choose which of the two to keep, the unique index would
+    refuse them both, and the user can see both in the list and delete one.
+    """
+    rows = (
+        (
+            await session.execute(
+                select(Source).where(Source.user_id == user_id, Source.sealed_config.is_not(None))
+            )
+        )
+        .scalars()
+        .all()
+    )
+    taken = {row.fingerprint for row in rows if row.fingerprint}
+    for row in rows:
+        if row.fingerprint or row.kind not in _KNOWN_KINDS:
+            continue
+        try:
+            config = sealer.unseal(row.sealed_config or "")
+        except InvalidToken:
+            # Sealed under a different key. Nothing here can read it, and the
+            # indexer will be skipping it for the same reason.
+            continue
+        finger = compute_fingerprint(Kind(row.kind), config)
+        if finger in taken:
+            continue
+        taken.add(finger)
+        row.fingerprint = finger
+
+
+async def duplicate_name(session: AsyncSession, user_id: UUID, finger: str) -> str | None:
+    """The name of the source already reading this exact place, if there is one."""
+    return await session.scalar(
+        select(Source.name).where(Source.user_id == user_id, Source.fingerprint == finger)
+    )
 
 
 async def publish(settings: Settings, session: AsyncSession) -> None:

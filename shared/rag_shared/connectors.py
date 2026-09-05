@@ -17,6 +17,7 @@ import json
 import logging
 from dataclasses import dataclass
 from enum import StrEnum
+from hashlib import sha256
 from typing import Any
 from uuid import UUID
 
@@ -58,6 +59,55 @@ REQUIRED_FIELDS: dict[Kind, tuple[str, ...]] = {
     Kind.DROPBOX: ("app_key", "app_secret", "refresh_token", "path"),
     Kind.ONEDRIVE: ("client_id", "client_secret", "refresh_token", "path"),
 }
+
+
+#: Which of a kind's fields say *what* is being read, as opposed to merely
+#: proving we are allowed to read it. Connecting the same thing twice indexes
+#: every fragment of it twice and pays for the embeddings twice, so it is
+#: refused — and this is the definition of "the same thing".
+#:
+#: The credential is in here for four of the five kinds, because it is what
+#: names the account: one Notion token is one workspace, and a Yandex token
+#: plus a path is one folder belonging to one person. That is a limit as much
+#: as a definition. Someone who runs the OAuth dance a second time gets a
+#: different refresh token for the same Dropbox, and this will not recognise
+#: it; doing better would mean calling each service to resolve an account id
+#: while the user waits on the form. Refusing the duplicate somebody actually
+#: creates — the same folder added twice — is what this is for.
+IDENTITY_FIELDS: dict[Kind, tuple[str, ...]] = {
+    Kind.GDRIVE: ("folder_id",),
+    Kind.NOTION: ("token",),
+    Kind.YANDEX: ("token", "path"),
+    Kind.DROPBOX: ("app_key", "refresh_token", "path"),
+    Kind.ONEDRIVE: ("client_id", "refresh_token", "path"),
+}
+
+
+def fingerprint(kind: Kind, config: dict[str, str]) -> str:
+    """What makes this source *this* source, as 64 hex characters.
+
+    A digest rather than the values themselves, because those values are
+    credentials and this one is stored in a plain column beside the sealed blob.
+    Sealing exists so that a database dump gives up the source list and not the
+    tokens behind it; a fingerprint that undid that would be worse than having
+    none. The inputs are opaque ids and high-entropy secrets, so the digest
+    gives nothing back.
+    """
+    material = "\n".join(
+        f"{field}={_identity(field, config.get(field, ''))}" for field in IDENTITY_FIELDS[kind]
+    )
+    return sha256(f"{kind.value}\n{material}".encode()).hexdigest()
+
+
+def _identity(field: str, value: str) -> str:
+    """One identity value, in its canonical spelling.
+
+    Only the folder fields need it: "/Документы", "Документы/" and "Документы"
+    are one folder, and typing it a different way the second time must not buy a
+    second copy of it. Credentials are left exactly as they are — a token is not
+    a path and has no spelling to normalise.
+    """
+    return value.strip().strip("/") if field == "path" else value
 
 
 @dataclass(frozen=True, slots=True)

@@ -12,9 +12,10 @@ from datetime import datetime
 
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel, Field
-from rag_shared.connectors import REQUIRED_FIELDS, Kind
+from rag_shared.connectors import REQUIRED_FIELDS, Kind, fingerprint
 from sqlalchemy import delete as sql_delete
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 
 from app import connectors
 from app.deps import SessionDep, SettingsDep, UserDep
@@ -134,14 +135,29 @@ async def add_connector(
     except ValueError as exc:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
 
+    finger = fingerprint(body.kind, config)
+    await connectors.backfill_fingerprints(sealer, session, user_id)
+    if (existing := await connectors.duplicate_name(session, user_id, finger)) is not None:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, f"Этот источник уже подключён как «{existing}»"
+        )
+
     source = Source(
         user_id=user_id,
         kind=body.kind.value,
         name=body.name.strip(),
         sealed_config=sealer.seal(config),
+        fingerprint=finger,
     )
     session.add(source)
-    await session.commit()
+    try:
+        await session.commit()
+    except IntegrityError as exc:
+        # The check above lost a race with another tab. Same answer, one step
+        # later — and the unique index is why it is an answer rather than a
+        # second copy of the source.
+        await session.rollback()
+        raise HTTPException(status.HTTP_409_CONFLICT, "Этот источник уже подключён") from exc
     await session.refresh(source)
 
     # After the commit: the manifest must never name a source the database does

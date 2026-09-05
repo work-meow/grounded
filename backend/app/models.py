@@ -9,6 +9,7 @@ from sqlalchemy import (
     Index,
     String,
     Text,
+    UniqueConstraint,
     func,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
@@ -60,11 +61,24 @@ class Source(Base):
     # ``files``, which has nothing to configure. Never leaves the process: it is
     # written here and copied into the manifest, and no response carries it.
     sealed_config: Mapped[str | None] = mapped_column(Text)
+    # A digest of the fields that say *where* this source reads from
+    # (rag_shared.connectors.fingerprint), so that "already connected" is a
+    # question the database can answer without the credential. Null for
+    # ``files``, and for connectors made before the check existed until the
+    # first add fills them in.
+    fingerprint: Mapped[str | None] = mapped_column(String(64))
     created_at: Mapped[datetime] = _created_at()
 
     documents: Mapped[list["Document"]] = relationship(
         back_populates="source", cascade="all, delete-orphan"
     )
+
+    # The same folder connected twice indexes every document in it twice and
+    # pays for the embeddings twice. Checked before the insert for the sake of
+    # the message; enforced here because that check and the insert are not one
+    # step, and two tabs are enough to slip between them. Postgres treats nulls
+    # as distinct, which is what leaves ``files`` and the not-yet-filled alone.
+    __table_args__ = (UniqueConstraint("user_id", "fingerprint", name="uq_sources_user_finger"),)
 
 
 class Document(Base):

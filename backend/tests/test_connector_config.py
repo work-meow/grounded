@@ -12,7 +12,7 @@ import uuid
 
 import pytest
 from pydantic import ValidationError
-from rag_shared.connectors import MANIFEST_KEY, REQUIRED_FIELDS, Kind, load_manifest
+from rag_shared.connectors import MANIFEST_KEY, REQUIRED_FIELDS, Kind, fingerprint, load_manifest
 from rag_shared.crypto import Sealer, generate_key
 
 from app import connectors, storage
@@ -163,3 +163,96 @@ async def test_a_kind_this_build_does_not_know_is_left_out(published):
     await connectors.publish(settings(), _Rows([stale, _source(Kind.NOTION, {"token": "y"})]))
 
     assert len(json.loads(published["body"])["sources"]) == 1
+
+
+# --- the same source, twice ---------------------------------------------------
+
+
+def test_the_same_place_under_a_different_name_is_the_same_source():
+    """The name is what the user calls it; the folder is what it reads."""
+    config = {"token": "y0_x", "path": "/Docs"}
+
+    assert fingerprint(Kind.YANDEX, config) == fingerprint(Kind.YANDEX, dict(config))
+
+
+@pytest.mark.parametrize("spelling", ["/Docs", "Docs", "Docs/", "  /Docs/  "])
+def test_a_folder_spelled_differently_is_still_that_folder(spelling):
+    """Otherwise the second attempt at the same folder gets in on a typo."""
+    canonical = fingerprint(Kind.YANDEX, {"token": "y0_x", "path": "/Docs"})
+
+    assert fingerprint(Kind.YANDEX, {"token": "y0_x", "path": spelling}) == canonical
+
+
+@pytest.mark.parametrize(
+    ("kind", "left", "right"),
+    [
+        (Kind.YANDEX, {"token": "a", "path": "/A"}, {"token": "a", "path": "/B"}),
+        (Kind.YANDEX, {"token": "a", "path": "/A"}, {"token": "b", "path": "/A"}),
+        (Kind.GDRIVE, {"folder_id": "1Aa"}, {"folder_id": "1Bb"}),
+        (Kind.NOTION, {"token": "ntn_a"}, {"token": "ntn_b"}),
+    ],
+)
+def test_a_different_place_is_a_different_source(kind, left, right):
+    assert fingerprint(kind, left) != fingerprint(kind, right)
+
+
+def test_the_credential_is_not_recoverable_from_the_fingerprint():
+    """It sits in a plain column next to the sealed blob. Sealing exists so a
+    database dump gives up the source list and not the tokens behind it."""
+    token = "ntn_K7pQ2mZx9RtLvB4nWcE6jH1sYdF3aU8gN5oX0iT"
+
+    finger = fingerprint(Kind.NOTION, {"token": token})
+
+    assert token not in finger
+    assert set(finger) <= set("0123456789abcdef") and len(finger) == 64
+
+
+# --- sources connected before any of this existed -----------------------------
+
+
+def _row(config: dict, *, kind=Kind.NOTION, name="источник", finger=None) -> Source:
+    return Source(
+        id=uuid.uuid4(),
+        user_id=USER,
+        kind=kind.value,
+        name=name,
+        sealed_config=Sealer(KEY).seal(config),
+        fingerprint=finger,
+    )
+
+
+USER = uuid.UUID("11111111-1111-1111-1111-111111111111")
+
+
+async def test_a_source_from_before_the_check_gets_a_fingerprint():
+    """Without this, the sources most likely to be added again are exactly the
+    ones nothing can be compared against."""
+    row = _row({"token": "ntn_a"})
+
+    await connectors.backfill_fingerprints(Sealer(KEY), _Rows([row]), USER)
+
+    assert row.fingerprint == fingerprint(Kind.NOTION, {"token": "ntn_a"})
+
+
+async def test_a_pair_that_is_already_a_duplicate_is_left_as_it_is():
+    """There is no honest way to pick which of the two to keep, and filling in
+    both would make the unique index refuse a change neither of them asked for.
+    Both stay visible in the list, where the user can delete one."""
+    first = _row({"token": "ntn_a"}, name="первый")
+    second = _row({"token": "ntn_a"}, name="второй")
+
+    await connectors.backfill_fingerprints(Sealer(KEY), _Rows([first, second]), USER)
+
+    assert first.fingerprint is not None
+    assert second.fingerprint is None
+
+
+async def test_a_config_this_key_cannot_open_is_skipped_rather_than_fatal():
+    """A source sealed under a previous SECRETS_KEY. The indexer is skipping it
+    for the same reason; adding a different source must still work."""
+    row = _row({"token": "ntn_a"})
+    row.sealed_config = Sealer(generate_key()).seal({"token": "ntn_a"})
+
+    await connectors.backfill_fingerprints(Sealer(KEY), _Rows([row]), USER)
+
+    assert row.fingerprint is None

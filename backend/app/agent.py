@@ -10,9 +10,11 @@ import logging
 import re
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
+from datetime import datetime
 from functools import lru_cache
 from typing import Any
 from uuid import UUID
+from zoneinfo import ZoneInfo
 
 from langchain.agents import create_agent
 from langchain.agents.middleware import ModelCallLimitMiddleware, ToolCallLimitMiddleware
@@ -39,6 +41,58 @@ SYSTEM_PROMPT = """\
 - Пиши обычным текстом, без markdown-разметки: интерфейс показывает ответ как
   есть, и «**жирный**» в нём видно звёздочками. Списки — простым дефисом.
 """
+
+
+#: Written out rather than taken from a locale. Russian month names need the
+#: genitive ("5 сентября", not "сентябрь"), strftime under a ru_RU locale needs
+#: that locale generated in the image, and setlocale is process-global and not
+#: thread-safe. Nineteen strings cost less than either.
+_WEEKDAYS = (
+    "понедельник",
+    "вторник",
+    "среда",
+    "четверг",
+    "пятница",
+    "суббота",
+    "воскресенье",
+)
+_MONTHS = (
+    "января",
+    "февраля",
+    "марта",
+    "апреля",
+    "мая",
+    "июня",
+    "июля",
+    "августа",
+    "сентября",
+    "октября",
+    "ноября",
+    "декабря",
+)
+
+
+def _today(now: datetime) -> str:
+    return (
+        f"Сегодня {_WEEKDAYS[now.weekday()]}, {now.day} {_MONTHS[now.month - 1]} {now.year} года."
+    )
+
+
+def system_prompt(settings: Settings) -> str:
+    """The rules, plus what day it is.
+
+    A model has no idea. Half the questions asked of a personal knowledge base
+    only mean something relative to today — "что на этой неделе", "сколько
+    осталось до сдачи", "последние заметки" — and without the date the model
+    either invents one out of its training data or declines, and both look from
+    the outside like the search having failed.
+
+    The date and not the time, deliberately: it is the same string for a whole
+    day, so the system prompt is byte-identical across a day's requests and
+    stays eligible for upstream prompt caching.
+    """
+    today = _today(datetime.now(ZoneInfo(settings.timezone)))
+    return f"{SYSTEM_PROMPT}\n{today} Считай «сегодня», «вчера», «на этой неделе» от этой даты.\n"
 
 
 # The [1] / [12] markers the model is told to write, as they appear in the answer.
@@ -221,7 +275,7 @@ async def answer(
             settings.agent_reasoning_effort,
         ),
         tools=_build_tools(settings, user_id, citations),
-        system_prompt=SYSTEM_PROMPT,
+        system_prompt=system_prompt(settings),
         middleware=[
             ToolCallLimitMiddleware(
                 run_limit=settings.max_tool_calls_per_run, exit_behavior="continue"

@@ -1,6 +1,7 @@
 from functools import lru_cache
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -77,9 +78,28 @@ class Settings(BaseSettings):
     max_model_calls_per_run: int = 8
     # How much chat history is replayed into the agent each turn.
     history_window: int = 20
+    # Whose today. A model knows nothing about the current date, and a personal
+    # knowledge base is full of questions that only mean anything relative to
+    # it, so every turn is told what day it is — in this zone. UTC is a safe
+    # default and a wrong one for most people; set it to where you are.
+    timezone: str = "UTC"
 
     # --- http -----------------------------------------------------------------
     cors_origins: list[str] = ["http://localhost:3000"]
+
+    @field_validator("timezone")
+    @classmethod
+    def _zone_exists(cls, value: str) -> str:
+        """Fail at startup, not on the first question of the day.
+
+        A typo here would otherwise raise inside the agent, halfway through
+        building a prompt, and read as the model being broken.
+        """
+        try:
+            ZoneInfo(value)
+        except (ZoneInfoNotFoundError, ValueError) as exc:
+            raise ValueError(f"unknown timezone {value!r}") from exc
+        return value
 
 
 @lru_cache

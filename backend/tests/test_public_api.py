@@ -236,12 +236,28 @@ def test_the_whole_public_surface_is_registered(client):
         "/api/v1/chat/completions",
         "/api/v1/models",
     }
-    # And every one of them requires a token: an endpoint that forgot to would
-    # be an open door nobody would notice from the outside.
-    for path, methods in paths.items():
-        if path.startswith("/api/v1"):
-            for method, spec in methods.items():
-                assert "security" in spec or spec.get("parameters"), (path, method)
+
+
+def test_every_endpoint_but_three_requires_a_token(client):
+    """The whole app, not only /api/v1: an endpoint that forgets its user
+    dependency is an open door, and nothing about the response would look
+    wrong from the outside. Three are public by design and named here, so
+    adding a fourth is a decision somebody has to write down.
+    """
+    public = {
+        ("/api/health", "get"),
+        ("/api/auth/login", "post"),  # trades a signed token for a cookie
+        ("/api/auth/logout", "post"),  # clears a cookie; nothing to protect
+    }
+    paths = client.get("/api/openapi.json").json()["paths"]
+
+    unguarded = {
+        (path, method)
+        for path, methods in paths.items()
+        for method, spec in methods.items()
+        if not spec.get("security")
+    }
+    assert unguarded == public
 
 
 def _events(payload: str) -> list[tuple[str, object]]:

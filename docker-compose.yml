@@ -103,7 +103,12 @@ services:
       SECRETS_KEY: ${SECRETS_KEY}
       GDRIVE_CREDENTIALS_JSON: ${GDRIVE_CREDENTIALS_JSON:-}
       REFRESH_INTERVAL_S: ${REFRESH_INTERVAL_S:-600}
-      CACHE_DIR: /data/cache
+      # Overridable so that a cache Pathway cannot read is recoverable without
+      # deleting anything on a live box: point this at a fresh directory and
+      # the old one stays on disk to be looked at. Learned the hard way — an
+      # interrupted write left a zero-byte file that made every start fail
+      # with "reader failed: 0 is not a valid match offset".
+      CACHE_DIR: ${CACHE_DIR:-/data/cache}
       PORT: "8666"
     volumes:
       - indexer-cache:/data

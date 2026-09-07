@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { FolderOpen, LogOut, MessagesSquare, Search, Sparkles } from "lucide-react";
+import { BookOpen, FolderOpen, LogOut, MessagesSquare, Search, Sparkles } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -16,6 +16,42 @@ const NAV = [
   { href: "/search", label: "Поиск", icon: Search },
   { href: "/sources", label: "Источники", icon: FolderOpen },
 ] as const;
+
+// Reference rather than a place to work, so it sits at the bottom, apart from
+// the three things somebody opens this app to do.
+const REFERENCE = { href: "/docs", label: "Документация", icon: BookOpen } as const;
+
+function NavLink({
+  href,
+  label,
+  icon: Icon,
+  pathname,
+  className,
+}: {
+  href: string;
+  label: string;
+  icon: React.ComponentType<{ className?: string }>;
+  pathname: string;
+  className?: string;
+}) {
+  const active = pathname.startsWith(href);
+  return (
+    <Link
+      href={href}
+      aria-current={active ? "page" : undefined}
+      className={cn(
+        "flex items-center gap-2 rounded-md px-2 py-2 text-sm transition-colors sm:px-3",
+        active
+          ? "bg-accent font-medium text-accent-foreground"
+          : "text-muted-foreground hover:bg-accent/50 hover:text-foreground",
+        className,
+      )}
+    >
+      <Icon className="size-4 shrink-0" />
+      <span className="hidden sm:inline">{label}</span>
+    </Link>
+  );
+}
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
@@ -76,25 +112,12 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
 
       <div className="flex flex-1 overflow-hidden">
         <nav className="flex w-14 shrink-0 flex-col gap-1 border-r p-2 sm:w-44 sm:p-3">
-          {NAV.map(({ href, label, icon: Icon }) => {
-            const active = pathname.startsWith(href);
-            return (
-              <Link
-                key={href}
-                href={href}
-                aria-current={active ? "page" : undefined}
-                className={cn(
-                  "flex items-center gap-2 rounded-md px-2 py-2 text-sm transition-colors sm:px-3",
-                  active
-                    ? "bg-accent font-medium text-accent-foreground"
-                    : "text-muted-foreground hover:bg-accent/50 hover:text-foreground",
-                )}
-              >
-                <Icon className="size-4 shrink-0" />
-                <span className="hidden sm:inline">{label}</span>
-              </Link>
-            );
-          })}
+          {NAV.map((item) => (
+            <NavLink key={item.href} {...item} pathname={pathname} />
+          ))}
+          {/* mt-auto, so the reference stays at the bottom of the rail however
+              many places to work there turn out to be. */}
+          <NavLink {...REFERENCE} pathname={pathname} className="mt-auto" />
         </nav>
 
         <main className="flex flex-1 flex-col overflow-hidden">{children}</main>

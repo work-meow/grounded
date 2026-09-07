@@ -8,6 +8,7 @@ touches when the indexer is restarting, which happens every time a source is
 connected, so what it says then matters more than what it says when all is well.
 """
 
+import time
 from datetime import timedelta
 from uuid import uuid4
 
@@ -119,12 +120,31 @@ def client():
 
 
 def _found(monkeypatch, chunks=None, *, fails=False):
-    async def retrieve(_settings, _user_id, query, k, document_id=None):
+    """Stub the index and record how it was asked.
+
+    The recording is the point of half the tests below: the narrowing arguments
+    are the ones that can be accepted by the endpoint and quietly not passed
+    on, which is what happened — the source chips on the search page filtered
+    nothing at all, and unfiltered results look exactly like filtered ones.
+    """
+    asked: list[dict] = []
+
+    async def retrieve(_settings, _user_id, query, k, document_id=None, source_id=None, since=None):
+        asked.append(
+            {
+                "query": query,
+                "k": k,
+                "document_id": document_id,
+                "source_id": source_id,
+                "since": since,
+            }
+        )
         if fails:
             raise httpx.ConnectError("the indexer is restarting")
         return chunks or []
 
     monkeypatch.setattr(retriever, "retrieve", retrieve)
+    return asked
 
 
 def _chunk(text=TEXT, **overrides):
@@ -178,23 +198,13 @@ def test_a_query_that_is_not_one_is_refused(client, monkeypatch, params):
     assert client.get("/api/search", params=params).status_code == 422
 
 
-def _asking(monkeypatch) -> dict:
-    asked: dict = {}
-
-    async def retrieve(_settings, _user_id, query, k, document_id=None):
-        asked.update(k=k, query=query)
-        return []
-
-    monkeypatch.setattr(retriever, "retrieve", retrieve)
-    return asked
-
-
 def test_without_a_judge_the_limit_reaches_the_index(client, monkeypatch):
-    asked = _asking(monkeypatch)
+    asked = _found(monkeypatch)
 
     client.get("/api/search", params={"q": "  вишлист  ", "limit": 7})
 
-    assert asked == {"k": 7, "query": "вишлист"}, "trimmed, and not silently capped"
+    assert asked[0]["k"] == 7, "not silently capped"
+    assert asked[0]["query"] == "вишлист", "trimmed"
 
 
 def test_with_a_judge_the_index_is_asked_for_candidates(client, monkeypatch):
@@ -202,11 +212,47 @@ def test_with_a_judge_the_index_is_asked_for_candidates(client, monkeypatch):
     candidates costs the same single call as judging seven, and gives the judge
     more to find the answer in."""
     monkeypatch.setattr(get_settings(), "rerank_enabled", True)
-    asked = _asking(monkeypatch)
+    asked = _found(monkeypatch)
 
     client.get("/api/search", params={"q": "вишлист", "limit": 7})
 
-    assert asked["k"] >= 20
+    assert asked[0]["k"] >= 20
+
+
+def test_narrowing_to_one_source_narrows_the_index_and_not_the_page(client, monkeypatch):
+    """The chips on the search page were accepted and dropped: the endpoint took
+    `source`, never passed it on, and returned everything. Unfiltered results
+    look exactly like filtered ones, which is why nothing complained.
+
+    It goes into the index rather than being applied afterwards so that the k
+    that come back are k from inside the chosen source, not k from everywhere
+    with most of them then discarded.
+    """
+    asked = _found(monkeypatch)
+    source_id = uuid4()
+
+    client.get("/api/search", params={"q": "вишлист", "source": str(source_id)})
+
+    assert asked[0]["source_id"] == source_id
+
+
+def test_a_recency_filter_reaches_the_index_as_an_instant(client, monkeypatch):
+    asked = _found(monkeypatch)
+
+    client.get("/api/search", params={"q": "вишлист", "days": 7})
+
+    since = asked[0]["since"]
+    assert since is not None
+    # A week back, give or take the second the request took.
+    assert abs((int(time.time()) - 7 * 86_400) - since) <= 2
+
+
+def test_no_narrowing_asked_for_is_no_narrowing_applied(client, monkeypatch):
+    asked = _found(monkeypatch)
+
+    client.get("/api/search", params={"q": "вишлист"})
+
+    assert asked[0]["source_id"] is None and asked[0]["since"] is None
 
 
 def test_the_page_says_how_many_were_found_before_judging(client, monkeypatch):

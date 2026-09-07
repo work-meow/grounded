@@ -5,6 +5,7 @@ the retrieval itself. This module's only real job is tenant isolation: every
 query is narrowed to one user before it leaves the process.
 """
 
+import time
 from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
@@ -163,6 +164,25 @@ class Chunk:
             page=_as_int(meta.get("page_number")),
             modified_at=_as_int(meta.get("modified_at")) or 0,
         )
+
+
+def since(days: int | None) -> int | None:
+    """The instant a "last N days" question reaches back to.
+
+    Nonsense is ignored rather than refused: a caller that passes days=0 or a
+    negative meant "no limit", and turning that into an empty result would be a
+    worse answer than searching everything.
+
+    ponytail: applied to the fragments after retrieval, not inside the filter —
+    see :func:`_tenant_filter` for why a number cannot go into that expression.
+    Ceiling: a recency question asks for the k best overall and keeps the recent
+    ones, rather than the k best among the recent ones, so on a large corpus it
+    could come back thin. Upgrade path: push it into the filter once a numeric
+    literal survives Pathway's rewriting.
+    """
+    if days is None or days <= 0:
+        return None
+    return int(time.time()) - days * 86_400
 
 
 async def retrieve(

@@ -83,7 +83,12 @@ async def find(
     started = time.perf_counter()
     try:
         candidates = await retriever.retrieve(
-            settings, user_id, query, _candidates(settings, limit)
+            settings,
+            user_id,
+            query,
+            _candidates(settings, limit),
+            source_id=source,
+            since=retriever.since(days),
         )
     except httpx.HTTPError as exc:
         # The index being unreachable is not this request being wrong. A 500

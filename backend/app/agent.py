@@ -9,7 +9,6 @@ import asyncio
 import json
 import logging
 import re
-import time
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -27,6 +26,7 @@ from langchain_openrouter import ChatOpenRouter
 from app import relevance, retriever, websearch
 from app.config import Settings
 from app.models import Message
+from app.spend import ANSWER, Spend
 
 logger = logging.getLogger(__name__)
 
@@ -197,25 +197,6 @@ class _Citations:
         return [item for item in self.items if item["n"] in cited]
 
 
-def _since(days: int | None) -> int | None:
-    """The instant a "last N days" question reaches back to.
-
-    Nonsense is ignored rather than refused: a model that passes days=0 or a
-    negative meant "no limit", and turning that into an empty result would be a
-    worse answer than searching everything.
-
-    ponytail: applied to the fragments after retrieval, not inside it — see
-    _tenant_filter for why a number cannot go into that expression. Ceiling: a
-    recency question asks for the k best overall and keeps the recent ones,
-    rather than the k best among the recent ones, so on a large corpus it could
-    come back thin. Upgrade path: push it into the filter once a numeric literal
-    survives Pathway's rewriting.
-    """
-    if days is None or days <= 0:
-        return None
-    return int(time.time()) - days * 86_400
-
-
 def _candidates(settings: Settings) -> int:
     """How many fragments to ask the index for.
 
@@ -283,7 +264,11 @@ def _render_web(found: websearch.Result, citations: _Citations) -> str:
 
 
 def _build_tools(
-    settings: Settings, user_id: UUID, citations: _Citations, web: bool = False
+    settings: Settings,
+    user_id: UUID,
+    citations: _Citations,
+    web: bool = False,
+    spend: Spend | None = None,
 ) -> list[BaseTool]:
     """Tools bound to one user by closure.
 
@@ -306,8 +291,9 @@ def _build_tools(
             settings,
             query,
             await retriever.retrieve(
-                settings, user_id, query, _candidates(settings), since=_since(days)
+                settings, user_id, query, _candidates(settings), since=retriever.since(days)
             ),
+            spend,
         )
         return _render(query, chunks, citations, web)
 
@@ -357,6 +343,7 @@ def _build_tools(
             await retriever.retrieve(
                 settings, user_id, query, _candidates(settings), document_id=target
             ),
+            spend,
         )
         return _render(query, chunks, citations, web)
 
@@ -374,7 +361,7 @@ def _build_tools(
                 по-русски, чем по-английски.
         """
         try:
-            found = await websearch.search(settings, query)
+            found = await websearch.search(settings, query, spend)
         except Exception:
             # Never fatal: the turn can still be answered from the knowledge
             # base, and a tool that raises takes the whole answer with it.
@@ -491,6 +478,7 @@ async def answer(
     question: str,
     history: list[Message],
     web: bool = False,
+    spend: Spend | None = None,
 ) -> AsyncIterator[tuple[str, Any]]:
     """Stream the turn as it happens, ending with one ``("citations", list)``.
 
@@ -503,6 +491,11 @@ async def answer(
     never told about a tool it does not have, which is how one ends up
     apologising for not calling it.
 
+    ``spend``, when given, is filled in as the turn runs — the model's own
+    calls here, the judge and any web search from inside the tools. It is the
+    caller's object rather than a return value because a streamed turn has no
+    return: the API reads it once the iteration is over.
+
     The agent is compiled per request so that its tools can close over the
     user. Compiling a four-tool graph is cheap next to a single LLM call.
     """
@@ -514,7 +507,7 @@ async def answer(
             settings.agent_temperature,
             settings.agent_reasoning_effort,
         ),
-        tools=_build_tools(settings, user_id, citations, web),
+        tools=_build_tools(settings, user_id, citations, web, spend),
         system_prompt=system_prompt(settings, web),
         middleware=_limits(settings, web),
     )
@@ -552,6 +545,18 @@ async def answer(
                 if (query := _query_of(call.args)) is not None:
                     call.settled = True
                     yield "step", {"tool": call.tool, "query": query}
+            # The last chunk of every model call carries no text, only what that
+            # call used and what it cost. Verified against the live provider:
+            # one such chunk per call, cost included, with no request-body flag
+            # asked for — and it reaches here through LangGraph unchanged.
+            if spend is not None and (usage := getattr(chunk, "usage_metadata", None)):
+                spend.add(
+                    ANSWER,
+                    settings.agent_model,
+                    prompt_tokens=usage.get("input_tokens"),
+                    completion_tokens=usage.get("output_tokens"),
+                    cost_usd=(chunk.response_metadata or {}).get("cost"),
+                )
             if text := _text_of(chunk):
                 parts.append(text)
                 yield "token", text

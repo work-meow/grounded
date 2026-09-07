@@ -10,7 +10,7 @@
   <a href="https://github.com/work-meow/grounded/actions/workflows/build.yml"><img src="https://github.com/work-meow/grounded/actions/workflows/build.yml/badge.svg" alt="сборка"></a>
   <img src="https://img.shields.io/badge/поиск-10%2F10-2ea44f" alt="полнота поиска 10 из 10">
   <img src="https://img.shields.io/badge/ответы-13%2F13-2ea44f" alt="верных ответов 13 из 13">
-  <img src="https://img.shields.io/badge/тестов-383-informational" alt="383 теста">
+  <img src="https://img.shields.io/badge/тестов-420-informational" alt="420 тестов">
   <img src="https://img.shields.io/badge/python-3.13-blue" alt="python 3.13">
   <img src="https://img.shields.io/badge/next.js-16-black" alt="Next.js 16">
   <img src="https://img.shields.io/badge/лицензия-MIT-blue" alt="лицензия MIT">
@@ -81,14 +81,22 @@ Fernet до того, как попасть в базу или в бакет, и
 подставляется объект `UUID`, а не строка: типизация здесь и есть защита от
 инъекции.
 
+**Всё это доступно из чужого кода — и говорит, сколько стоило.** `POST
+/api/v1/answer` отвечает одним JSON или потоком, со сносками, шагами агента и
+ценой запроса, собранной из того, что выставил провайдер за каждый вызов. Тот
+же движок отвечает и в формате OpenAI, так что готовый SDK работает по одному
+`base_url` — проверено официальным клиентом. Подробно:
+[docs/api.md](docs/api.md).
+
 ## Как устроено
 
 ```
-                        браузер
-                           │
-                    Next.js + shadcn/ui
-                           │  JWT в HttpOnly cookie
-                           ▼
+              браузер                    ваш код
+                 │                          │
+          Next.js + shadcn/ui      /api/v1 · формат OpenAI
+                 │  JWT в cookie            │  JWT в Authorization
+                 └───────────┬──────────────┘
+                             ▼
                    FastAPI  ──────────────►  PostgreSQL
                       │                      users / sources / documents
                 LangChain agent              chats / messages
@@ -215,6 +223,8 @@ cd frontend && npx tsc --noEmit && npx eslint . && npm run build
 
 ## Документация
 
+- [docs/api.md](docs/api.md) — API: спросить, найти, загрузить; потоком или
+  одним ответом; стоимость запроса; формат OpenAI.
 - [docs/setup.md](docs/setup.md) — подключение источников, сервисный аккаунт
   Google, деплой.
 - [docs/design.md](docs/design.md) — почему именно так: замеры, отвергнутые

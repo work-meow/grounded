@@ -52,7 +52,7 @@ def owned(monkeypatch):
     async def _owned_chat(session, user_id, chat_id):
         return None
 
-    monkeypatch.setattr(chats, "_owned_chat", _owned_chat)
+    monkeypatch.setattr(chats.conversation, "owned_chat", _owned_chat)
 
 
 async def _rate(message: Message | None, rating: int) -> _Session:

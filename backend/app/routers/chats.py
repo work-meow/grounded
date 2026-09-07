@@ -10,9 +10,8 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import delete as sql_delete
 from sqlalchemy import select, tuple_
-from sqlalchemy.ext.asyncio import AsyncSession
 
-from app import agent
+from app import conversation
 from app.config import Settings
 from app.db import Session
 from app.deps import SessionDep, SettingsDep, UserDep
@@ -92,7 +91,7 @@ async def create_chat(user_id: UserDep, session: SessionDep) -> ChatOut:
 
 @router.delete("/{chat_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_chat(chat_id: uuid.UUID, user_id: UserDep, session: SessionDep) -> None:
-    await _owned_chat(session, user_id, chat_id)
+    await conversation.owned_chat(session, user_id, chat_id)
     await session.execute(sql_delete(Chat).where(Chat.id == chat_id))
     await session.commit()
 
@@ -115,7 +114,7 @@ async def list_messages(
     end, so an offset would be both slower with every page and wrong whenever a
     message arrived mid-scroll — the row it counted from would have moved.
     """
-    await _owned_chat(session, user_id, chat_id)
+    await conversation.owned_chat(session, user_id, chat_id)
 
     query = select(Message).where(Message.chat_id == chat_id)
     if before is not None:
@@ -193,7 +192,7 @@ async def rate(
     wrong is a question worth adding to the eval set, and those are otherwise
     remembered by nobody.
     """
-    await _owned_chat(session, user_id, chat_id)
+    await conversation.owned_chat(session, user_id, chat_id)
     message = (
         await session.execute(
             select(Message).where(Message.id == message_id, Message.chat_id == chat_id)
@@ -222,26 +221,12 @@ async def ask(
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Пустой вопрос")
 
     async with Session() as session:
-        chat = await _owned_chat(session, user_id, chat_id)
-        history = (
-            (
-                await session.execute(
-                    select(Message)
-                    .where(Message.chat_id == chat_id)
-                    .order_by(Message.created_at.desc())
-                    .limit(settings.history_window)
-                )
-            )
-            .scalars()
-            .all()
+        history = await conversation.open_turn(
+            session, user_id, chat_id, question, settings.history_window
         )
-        session.add(Message(chat_id=chat_id, role="user", content=question, citations=[]))
-        if chat.title == "Новый чат":
-            chat.title = question[:80]
-        await session.commit()
 
     return StreamingResponse(
-        _stream(settings, user_id, chat_id, question, list(reversed(history)), body.web),
+        _stream(settings, user_id, chat_id, question, history, body.web),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
@@ -271,20 +256,16 @@ async def _stream(
     produced disappear. Awaiting during ``aclose()`` is allowed; yielding is
     not, which is why the ``done`` event stays outside.
     """
-    parts: list[str] = []
-    citations: list[dict[str, Any]] = []
+    collected = conversation.Collected()
+    # Every event is relayed as it arrives, including both halves of a step —
+    # the tool's name, then its query — because on a screen the earlier half is
+    # worth showing at once. The collector is what remembers the answer itself.
     try:
-        async for kind, payload in agent.answer(settings, user_id, question, history, web):
-            if kind == "token":
-                parts.append(payload)
-                yield _sse("token", payload)
-            elif kind == "step":
-                # Not saved with the answer: it says what is happening now, and
-                # a finished turn has nothing happening in it.
-                yield _sse("step", payload)
-            elif kind == "citations":
-                citations = payload
-                yield _sse("citations", payload)
+        async for kind, payload in conversation.stream(
+            settings, user_id, question, history, web, collected
+        ):
+            if kind in ("token", "step", "citations"):
+                yield _sse(kind, payload)
     except Exception:
         # The client must learn the turn failed; a bare 500 mid-stream would
         # just look like the answer stopped. The reason goes to the log, not
@@ -293,30 +274,6 @@ async def _stream(
         logger.exception("agent run failed for chat %s", chat_id)
         yield _sse("error", "Не удалось получить ответ. Попробуйте ещё раз.")
     finally:
-        await _save_answer(chat_id, "".join(parts), citations)
+        await conversation.save_answer(chat_id, collected.text, collected.citations)
 
-    yield _sse("done", {"citations": citations})
-
-
-async def _save_answer(chat_id: uuid.UUID, text: str, citations: list[dict[str, Any]]) -> None:
-    """Keep whatever was produced — a partial answer beats a lost turn."""
-    if not text:
-        return
-    try:
-        async with Session() as session:
-            session.add(
-                Message(chat_id=chat_id, role="assistant", content=text, citations=citations)
-            )
-            await session.commit()
-    except Exception:
-        # Never let a write failure replace the answer the user is reading.
-        logger.exception("could not save the answer for chat %s", chat_id)
-
-
-async def _owned_chat(session: AsyncSession, user_id: uuid.UUID, chat_id: uuid.UUID) -> Chat:
-    chat = (
-        await session.execute(select(Chat).where(Chat.id == chat_id, Chat.user_id == user_id))
-    ).scalar_one_or_none()
-    if chat is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Чат не найден")
-    return chat
+    yield _sse("done", {"citations": collected.citations})

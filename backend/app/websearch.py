@@ -45,6 +45,7 @@ from typing import Any
 
 from app import http, retriever
 from app.config import Settings
+from app.spend import WEB_SEARCH, Spend
 
 logger = logging.getLogger(__name__)
 
@@ -94,8 +95,13 @@ class Result:
     sources: list[Source]
 
 
-async def search(settings: Settings, query: str) -> Result:
-    """Search the web for one query. Raises on transport or HTTP failure."""
+async def search(settings: Settings, query: str, spend: Spend | None = None) -> Result:
+    """Search the web for one query. Raises on transport or HTTP failure.
+
+    The most expensive thing a turn can do — about $0.00125 a call against
+    fractions of a cent for everything else — so ``spend`` is where a caller
+    reporting a bill learns that this, and not the answer, is what it paid for.
+    """
     response = await http.client().post(
         f"{settings.openrouter_base_url}/chat/completions",
         headers={"Authorization": f"Bearer {settings.openrouter_api_key}"},
@@ -112,7 +118,12 @@ async def search(settings: Settings, query: str) -> Result:
         timeout=settings.web_search_timeout_s,
     )
     response.raise_for_status()
-    return _result(response.json())
+    body = response.json()
+    if spend is not None:
+        # The plugin's own fee is billed inside this completion's cost, so
+        # there is nothing separate to add for the searching itself.
+        spend.add_completion(WEB_SEARCH, settings.web_search_model, body)
+    return _result(body)
 
 
 def _plugin(settings: Settings) -> dict[str, Any]:

@@ -26,6 +26,7 @@ from typing import Any
 
 from app import http, retriever
 from app.config import Settings
+from app.spend import RERANK, Spend
 
 logger = logging.getLogger(__name__)
 
@@ -43,14 +44,22 @@ _INSTRUCTION = (
 
 
 async def keep_relevant(
-    settings: Settings, question: str, chunks: list[retriever.Chunk]
+    settings: Settings,
+    question: str,
+    chunks: list[retriever.Chunk],
+    spend: Spend | None = None,
 ) -> list[retriever.Chunk]:
-    """The candidates that bear on the question, best first. May be empty."""
+    """The candidates that bear on the question, best first. May be empty.
+
+    ``spend`` collects what this call cost when the caller is reporting a bill.
+    Optional because the search page does not: it shows a page of results, not
+    an invoice, and nothing there would read the number.
+    """
     if not settings.rerank_enabled or not chunks:
         return chunks[: settings.rerank_keep]
 
     try:
-        chosen = await _ask(settings, question, chunks)
+        chosen = await _ask(settings, question, chunks, spend)
     except Exception:
         # Degrading to the ranked order is exactly what this replaces, so a
         # failure here costs precision and never an answer.
@@ -63,7 +72,10 @@ async def keep_relevant(
 
 
 async def _ask(
-    settings: Settings, question: str, chunks: list[retriever.Chunk]
+    settings: Settings,
+    question: str,
+    chunks: list[retriever.Chunk],
+    spend: Spend | None = None,
 ) -> list[int] | None:
     """The indices the judge picked, or None if it did not answer usefully.
 
@@ -89,7 +101,10 @@ async def _ask(
         timeout=settings.rerank_timeout_s,
     )
     response.raise_for_status()
-    return _indices(response.json(), len(chunks))
+    body = response.json()
+    if spend is not None:
+        spend.add_completion(RERANK, settings.rerank_model, body)
+    return _indices(body, len(chunks))
 
 
 def _indices(body: Any, total: int) -> list[int] | None:

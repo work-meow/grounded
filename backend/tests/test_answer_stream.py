@@ -22,7 +22,7 @@ def saved(monkeypatch) -> list[tuple[str, list]]:
     async def fake_save(chat_id, text, citations):
         written.append((text, citations))
 
-    monkeypatch.setattr(chats, "_save_answer", fake_save)
+    monkeypatch.setattr(chats.conversation, "save_answer", fake_save)
     return written
 
 
@@ -49,7 +49,7 @@ def stream():
 
 async def test_completed_answer_is_streamed_and_saved(monkeypatch, saved):
     monkeypatch.setattr(
-        chats.agent,
+        chats.conversation.agent,
         "answer",
         agent_yielding(("token", "45 "), ("token", "дней"), ("citations", [{"n": 1}])),
     )
@@ -62,7 +62,9 @@ async def test_completed_answer_is_streamed_and_saved(monkeypatch, saved):
 
 async def test_a_client_that_disappears_mid_answer_does_not_lose_it(monkeypatch, saved):
     monkeypatch.setattr(
-        chats.agent, "answer", agent_yielding(("token", "начало"), ("token", " ответа"))
+        chats.conversation.agent,
+        "answer",
+        agent_yielding(("token", "начало"), ("token", " ответа")),
     )
 
     generator = stream()
@@ -73,7 +75,9 @@ async def test_a_client_that_disappears_mid_answer_does_not_lose_it(monkeypatch,
 
 
 async def test_the_error_event_carries_no_internals(monkeypatch, saved):
-    monkeypatch.setattr(chats.agent, "answer", agent_yielding(("token", "част"), fail=True))
+    monkeypatch.setattr(
+        chats.conversation.agent, "answer", agent_yielding(("token", "част"), fail=True)
+    )
 
     records = [record async for record in stream()]
     error = next(record for record in records if record.startswith("event: error"))

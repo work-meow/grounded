@@ -25,6 +25,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from app import http
 from app.config import get_settings
 from app.db import engine
+from app.limits import JSON_LIMIT, MULTIPART_SLACK, BodyLimit
 from app.routers import auth, chats, compat, connectors, search, sources, v1
 
 DESCRIPTION = """\
@@ -62,6 +63,18 @@ app = FastAPI(
     docs_url="/api/docs",
     redoc_url=None,
     openapi_url="/api/openapi.json",
+)
+#: The two endpoints that accept a file. Everything else sends JSON, and the
+#: difference between the two ceilings is sixty megabytes.
+_UPLOAD_PATHS = frozenset({"/api/sources", "/api/v1/documents"})
+
+# Outermost, so that it runs before CORS, before routing and before FastAPI
+# reads the body: see app/limits.py for the measurement that put it here.
+app.add_middleware(
+    BodyLimit,
+    default=JSON_LIMIT,
+    uploads=settings.max_upload_bytes + MULTIPART_SLACK,
+    upload_paths=_UPLOAD_PATHS,
 )
 app.add_middleware(
     CORSMiddleware,

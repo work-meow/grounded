@@ -61,9 +61,18 @@ MODEL_WEB = "grounded-web"
 #: nothing here; the process start is at least true.
 _STARTED = int(time.time())
 
-#: How much of a message list is read as history. The agent is given
-#: ``history_window`` of it; this is the bound on the request body.
+#: How many messages a caller may send. Generous on purpose: a client replaying
+#: a long conversation should not get a 422 for being thorough — only the last
+#: ``history_window`` of them reach the model anyway. The bound that matters for
+#: the machine is on bytes, in :mod:`app.limits`.
 MAX_MESSAGES = 200
+
+#: The ceiling on one message's text — the same one the native API puts on a
+#: question. The question is refused above it, because silently shortening a
+#: question means answering a different one; an earlier turn is trimmed instead,
+#: because refusing a whole conversation over its history is worse than reading
+#: less of it.
+MAX_TEXT_CHARS = 8000
 
 
 class ChatMessage(BaseModel):
@@ -81,7 +90,9 @@ class ChatMessage(BaseModel):
 class CompletionIn(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
-    model: str = MODEL
+    # Bounded because it comes back in the text of a 404: an unbounded name
+    # would be an unbounded string echoed to whoever sent it.
+    model: str = Field(default=MODEL, max_length=200)
     messages: list[ChatMessage] = Field(min_length=1, max_length=MAX_MESSAGES)
     stream: bool = False
 
@@ -117,6 +128,12 @@ async def completions(body: CompletionIn, user_id: UserDep, settings: SettingsDe
         raise _error(
             status.HTTP_400_BAD_REQUEST,
             "последнее сообщение должно быть от пользователя и не быть пустым",
+            "invalid_request_error",
+        )
+    if len(question) > MAX_TEXT_CHARS:
+        raise _error(
+            status.HTTP_400_BAD_REQUEST,
+            f"вопрос длиннее {MAX_TEXT_CHARS} символов",
             "invalid_request_error",
         )
 
@@ -187,9 +204,11 @@ def _split(messages: list[ChatMessage], settings: Settings) -> tuple[str, list[M
     ]
     for index in range(len(turns) - 1, -1, -1):
         if turns[index][0] == "user":
-            return turns[index][1], conversation.as_history(
-                turns[:index][-settings.history_window :]
-            )
+            earlier = [
+                (role, text[:MAX_TEXT_CHARS])
+                for role, text in turns[:index][-settings.history_window :]
+            ]
+            return turns[index][1], conversation.as_history(earlier)
     return "", []
 
 

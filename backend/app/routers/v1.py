@@ -189,17 +189,18 @@ async def answer(body: AnswerIn, user_id: UserDep, settings: SettingsDep) -> Any
     if not question:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Пустой вопрос")
 
-    # The setup runs in its own session, which is closed before the turn
-    # starts: a turn takes seconds, and a pooled connection held across one is
-    # a connection the rest of the process cannot have.
-    async with Session() as session:
-        if body.chat_id is not None:
+    if body.chat_id is None:
+        history = conversation.as_history(
+            [(turn.role, turn.content) for turn in body.history][-settings.history_window :]
+        )
+    else:
+        # Its own session, opened and closed before the turn begins: a turn
+        # takes seconds, and a pooled connection held across one is a
+        # connection the rest of the process cannot have. The stateless case
+        # opens none at all — it has nothing to read and nothing to record.
+        async with Session() as session:
             history = await conversation.open_turn(
                 session, user_id, body.chat_id, question, settings.history_window
-            )
-        else:
-            history = conversation.as_history(
-                [(turn.role, turn.content) for turn in body.history][-settings.history_window :]
             )
 
     if body.stream:

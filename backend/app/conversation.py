@@ -14,7 +14,7 @@ once; three copies of them would drift, and the drift would be silent.
 import logging
 import time
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -99,7 +99,7 @@ async def open_turn(
     return list(reversed(history))
 
 
-def as_history(turns: list[tuple[str, str]]) -> list[Message]:
+def as_history(turns: Sequence[tuple[str, str]]) -> list[Message]:
     """History a caller keeps itself, in the shape the agent reads.
 
     These rows are never added to a session — they exist to carry a role and a

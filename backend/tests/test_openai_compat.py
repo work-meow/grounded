@@ -192,6 +192,36 @@ def test_a_message_list_with_nothing_to_answer_is_a_400(client, seen):
     assert not seen
 
 
+def test_a_question_longer_than_the_native_limit_is_refused(client, seen):
+    """The same ceiling the native API puts on a question. Shortening it
+    silently would answer a different question, and there is no cheap way for
+    the caller to notice."""
+    from app.routers.compat import MAX_TEXT_CHARS
+
+    response = complete(client, messages=[{"role": "user", "content": "а" * (MAX_TEXT_CHARS + 1)}])
+
+    assert response.status_code == 400
+    assert not seen
+
+
+def test_a_long_earlier_turn_is_trimmed_rather_than_refused(client, seen):
+    """Refusing a whole conversation because of the size of something said
+    earlier in it would be worse than reading less of that."""
+    from app.routers.compat import MAX_TEXT_CHARS
+
+    complete(
+        client,
+        messages=[
+            {"role": "user", "content": "б" * (MAX_TEXT_CHARS * 2)},
+            {"role": "assistant", "content": "ок"},
+            {"role": "user", "content": "ставка"},
+        ],
+    )
+
+    assert seen[0]["question"] == "ставка"
+    assert len(seen[0]["history"][0]) == MAX_TEXT_CHARS + len("user:")
+
+
 def test_a_stream_ends_with_a_usage_chunk_and_then_done(client, seen):
     frames = _frames(complete(client, stream=True).text)
 

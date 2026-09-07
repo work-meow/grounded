@@ -22,6 +22,7 @@ from langchain.agents.middleware import ModelCallLimitMiddleware, ToolCallLimitM
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 from langchain_core.tools import BaseTool, tool
 from langchain_openrouter import ChatOpenRouter
+from pydantic import SecretStr
 
 from app import relevance, retriever, websearch
 from app.config import Settings
@@ -225,9 +226,11 @@ def _render(
         # thing to tell the model than eight paragraphs about something else.
         return f"По запросу «{query}» подходящих фрагментов нет. {_next_move(web)}"
     lines = [
-        f"Подходящие фрагменты по запросу «{query}» — {len(chunks)}. "
-        "Если ни один всё же не отвечает на вопрос — молча вызови поиск ещё раз "
-        f"с другой формулировкой. {_next_move(web)}"
+        (
+            f"Подходящие фрагменты по запросу «{query}» — {len(chunks)}. "
+            "Если ни один всё же не отвечает на вопрос — молча вызови поиск ещё раз "
+            f"с другой формулировкой. {_next_move(web)}"
+        )
     ]
     for chunk in chunks:
         number = citations.add(chunk)
@@ -393,7 +396,13 @@ def _model(model: str, api_key: str, temperature: float, effort: str = "") -> Ch
     # accept an http_async_client to configure instead. The turn is bounded in
     # answer() rather than here.
     return ChatOpenRouter(
-        model=model, api_key=api_key, temperature=temperature, reasoning=reasoning
+        # SecretStr rather than the bare string it accepts: pydantic would
+        # coerce it anyway, and this way the key cannot come back out of a
+        # repr() of the client — which is what ends up in a traceback.
+        model=model,
+        api_key=SecretStr(api_key),
+        temperature=temperature,
+        reasoning=reasoning,
     )
 
 

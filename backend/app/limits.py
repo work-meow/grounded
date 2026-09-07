@@ -5,8 +5,9 @@ at all — took resident memory from 290 MB to 520 MB, and a second one to
 827 MB. FastAPI reads and parses the body *before* it solves dependencies, so
 authentication happens after the memory is already spent, and a field with
 ``max_length=8000`` is validated against a string that has already been built.
-On a 4 GB box that also runs other things, a handful of concurrent requests is
-an out-of-memory kill, from an attacker who needs no credentials.
+On the deployment box — measured: 8 GB total, 4.6 GB of it available, other
+people's services on the same host — a handful of concurrent requests is an
+out-of-memory kill, from an attacker who needs no credentials.
 
 There is no framework knob for this. Starlette and uvicorn do not limit body
 size, and neither does Traefik unless a buffering middleware is configured. So

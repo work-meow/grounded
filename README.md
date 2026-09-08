@@ -10,7 +10,7 @@
   <a href="https://github.com/work-meow/grounded/actions/workflows/build.yml"><img src="https://github.com/work-meow/grounded/actions/workflows/build.yml/badge.svg" alt="сборка"></a>
   <img src="https://img.shields.io/badge/поиск-10%2F10-2ea44f" alt="полнота поиска 10 из 10">
   <img src="https://img.shields.io/badge/ответы-13%2F13-2ea44f" alt="верных ответов 13 из 13">
-  <img src="https://img.shields.io/badge/тестов-428-informational" alt="428 тестов">
+  <img src="https://img.shields.io/badge/тестов-535-informational" alt="535 тестов">
   <img src="https://img.shields.io/badge/python-3.13-blue" alt="python 3.13">
   <img src="https://img.shields.io/badge/next.js-16-black" alt="Next.js 16">
   <img src="https://img.shields.io/badge/лицензия-MIT-blue" alt="лицензия MIT">
@@ -218,8 +218,9 @@ cd frontend && npx tsc --noEmit && npx eslint . && npm run build
   Следующее изменение это чинит.
 - **Dropbox и OneDrive требуют четыре поля**, включая refresh token: полноценный
   OAuth-редирект потребовал бы регистрации приложения и коллбэка.
-- **История чата отдаётся модели целиком** (последние 20 сообщений), без
-  суммаризации.
+- **История чата сжимается, а не обрезается**: последние 20 сообщений уходят
+  модели целиком, пока укладываются в порог по токенам, и суммаризуются выше
+  него.
 - **Тело запроса ограничено 4 МБ**, загрузка — 64 МБ. FastAPI разбирает тело до
   проверки токена, поэтому потолок стоит раньше всего остального.
 - **У API нет ограничения частоты запросов.** Один ход ограничен по числу

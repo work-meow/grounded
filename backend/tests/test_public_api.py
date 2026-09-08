@@ -206,7 +206,8 @@ def test_search_is_delegated_to_the_one_implementation_of_it(client, monkeypatch
     monkeypatch.setattr(retriever, "retrieve", retrieve)
     source = uuid4()
     body = client.get(
-        "/api/v1/search", params={"q": "отпуск", "limit": 5, "source": str(source), "days": 30}
+        "/api/v1/search",
+        params={"q": "отпуск", "limit": 5, "source": str(source), "days": 30},
     ).json()
 
     assert asked[0]["query"] == "отпуск"
@@ -226,6 +227,7 @@ def test_the_whole_public_surface_is_registered(client):
         "/api/v1/me",
         "/api/v1/answer",
         "/api/v1/search",
+        "/api/v1/verify",
         "/api/v1/documents",
         "/api/v1/documents/{document_id}",
         "/api/v1/documents/{document_id}/link",

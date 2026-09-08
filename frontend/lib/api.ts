@@ -13,6 +13,9 @@ const BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 // minutes, and it carries its own abort signal.
 const TIMEOUT_MS = 30_000;
 const UPLOAD_TIMEOUT_MS = 5 * 60_000;
+// Checking a text is a search and a judgement per claim, up to twenty of
+// them: minutes, not the thirty seconds every other call gets.
+const VERIFY_TIMEOUT_MS = 3 * 60_000;
 
 export class ApiError extends Error {
   constructor(
@@ -256,6 +259,14 @@ export const api = {
       { signal },
     ),
 
+  /** Check a written text against the documents, claim by claim. */
+  verify: (text: string, signal?: AbortSignal) =>
+    request<VerifyOut>(
+      "/api/v1/verify",
+      { method: "POST", body: JSON.stringify({ text }), signal },
+      VERIFY_TIMEOUT_MS,
+    ),
+
   chats: () => request<ChatOut[]>("/api/chats"),
   createChat: () => request<ChatOut>("/api/chats", { method: "POST" }),
   deleteChat: (id: string) => request<void>(`/api/chats/${id}`, { method: "DELETE" }),
@@ -275,6 +286,25 @@ export const api = {
 // --- streaming ---------------------------------------------------------------
 
 /** What the agent is doing: the tool it reached for, and what it asked of it. */
+/** One claim from a checked text, and what the documents said about it. */
+export type ClaimOut = {
+  claim: string;
+  /**
+   * `supported` — the fragments confirm it; `contradicted` — they say
+   * otherwise; `absent` — the documents have nothing on it; `unknown` — the
+   * judge did not answer, which is not the same as absent.
+   */
+  verdict: "supported" | "contradicted" | "absent" | "unknown";
+  why: string;
+  citations: Citation[];
+};
+
+export type VerifyOut = {
+  claims: ClaimOut[];
+  usage: Usage;
+  took_ms: number;
+};
+
 export type Step = { tool: string; query: string };
 
 type StreamHandlers = {

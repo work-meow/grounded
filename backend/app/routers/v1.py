@@ -49,7 +49,7 @@ from fastapi import APIRouter, HTTPException, Query, UploadFile, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, model_validator
 
-from app import conversation, quota
+from app import conversation, quota, verify
 from app.config import Settings
 from app.db import Session
 from app.deps import SessionDep, SettingsDep, UserDep
@@ -358,6 +358,71 @@ def _out(
 # Delegation rather than reimplementation: one search, one upload, one list of
 # documents. What the version buys is that these signatures are now promises,
 # and the handlers behind them can be refactored without breaking one.
+
+
+class VerifyIn(BaseModel):
+    text: str = Field(min_length=1, max_length=20_000)
+
+
+class ClaimOut(BaseModel):
+    claim: str
+    #: "supported" — фрагменты подтверждают; "contradicted" — во фрагментах
+    #: сказано иное; "absent" — в базе об этом ничего нет; "unknown" — судья не
+    #: ответил, и это не то же самое, что "absent".
+    verdict: str
+    #: Одна фраза о том, на чём основан вывод.
+    why: str = ""
+    citations: list[Citation] = Field(default_factory=list)
+
+
+class VerifyOut(BaseModel):
+    claims: list[ClaimOut]
+    usage: Usage
+    took_ms: int
+
+
+@router.post("/verify")
+async def verify_text(body: VerifyIn, user_id: UserDep, settings: SettingsDep) -> VerifyOut:
+    """Check a piece of text against the documents, claim by claim.
+
+    The chat's promise turned around: instead of answering only from the
+    documents, this says which parts of what you already wrote they support,
+    contradict, or have never heard of.
+
+    Costs one cheap call to split the text plus, per claim, one search and one
+    judgement — about $0.002 for a page of prose. Bounded at 20 claims.
+    """
+    text = body.text.strip()
+    if not text:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Пустой текст")
+    await within_budget(settings, user_id)
+
+    started = time.perf_counter()
+    spend = Spend()
+    try:
+        listed = await verify.claims(settings, text, spend)
+        checked = [await verify.check(settings, user_id, claim, spend) for claim in listed]
+    except Exception as exc:
+        logger.exception("could not verify a text for user %s", user_id)
+        raise HTTPException(
+            status.HTTP_502_BAD_GATEWAY, "Не удалось проверить текст. Попробуйте ещё раз."
+        ) from exc
+
+    usage = spend.report()
+    await charge(settings, user_id, usage)
+    return VerifyOut(
+        claims=[
+            ClaimOut(
+                claim=one.claim,
+                verdict=one.verdict,
+                why=one.why,
+                citations=[Citation(**item) for item in one.citations],
+            )
+            for one in checked
+        ],
+        usage=Usage(**usage),
+        took_ms=round((time.perf_counter() - started) * 1000),
+    )
 
 
 @router.get("/search")

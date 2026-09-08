@@ -80,6 +80,11 @@ export type Citation = {
    * citations saved before web search existed, hence the loose check.
    */
   url?: string | null;
+  /**
+   * Unix seconds: when the far end last changed the document. Null for a page
+   * from the web, and for citations saved before this was carried.
+   */
+  modified_at?: number | null;
 };
 
 export type DocumentOut = {

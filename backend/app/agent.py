@@ -156,6 +156,12 @@ class _Citations:
             filename=chunk.filename,
             page=chunk.page,
             snippet=chunk.text[:SNIPPET_CHARS],
+            # When the far end last changed it. Carried so the chip can say
+            # "обновлён два года назад" — a policy answered from a document
+            # nobody has touched since is a right answer to an old question,
+            # and that is worth knowing next to the source rather than inside
+            # the sentence, where the model would have to be told to write it.
+            modified_at=chunk.modified_at or None,
         )
 
     def add_link(self, source: websearch.Source) -> int:
@@ -182,6 +188,7 @@ class _Citations:
                     "filename": None,
                     "page": None,
                     "url": None,
+                    "modified_at": None,
                     **item,
                 }
             )

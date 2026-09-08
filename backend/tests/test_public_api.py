@@ -27,6 +27,9 @@ CITATION = {
     "page": 3,
     "url": None,
     "snippet": "28 календарных дней",
+    # When the far end last changed the document, so the chip can say how old
+    # the answer's source is.
+    "modified_at": 1788000000,
 }
 
 

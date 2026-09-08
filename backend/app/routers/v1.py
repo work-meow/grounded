@@ -121,6 +121,9 @@ class Citation(BaseModel):
     #: GET /documents/{document_id}/link, which knows how to sign one.
     url: str | None = None
     snippet: str = ""
+    #: Unix seconds: when the far end last changed the document. Null for a
+    #: page from the web, and for citations saved before this was carried.
+    modified_at: int | None = None
 
 
 class Step(BaseModel):

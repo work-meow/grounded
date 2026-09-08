@@ -32,6 +32,7 @@ import {
   type Step,
   type Trace as TraceOut,
 } from "@/lib/api";
+import { staleness } from "@/lib/age";
 import { cn } from "@/lib/utils";
 
 /**
@@ -828,6 +829,14 @@ function Citations({ citations }: { citations: Citation[] }) {
           {citation.url && <Globe className="size-3 shrink-0" />}
           <span className="max-w-52 truncate">{citation.filename ?? "документ"}</span>
           {citation.page !== null && <span>· стр. {citation.page}</span>}
+          {/* Only when it is old enough to matter: a right answer out of a
+              document nobody has touched in two years is still an answer to an
+              old question, and the reader is the one who can tell. */}
+          {staleness(citation.modified_at) && (
+            <span className="text-amber-600 dark:text-amber-500">
+              · {staleness(citation.modified_at)}
+            </span>
+          )}
         </button>
       ))}
     </>

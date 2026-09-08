@@ -232,6 +232,7 @@ def test_the_whole_public_surface_is_registered(client):
         "/api/v1/search",
         "/api/v1/verify",
         "/api/v1/related",
+        "/api/v1/changes",
         "/api/v1/documents",
         "/api/v1/documents/{document_id}",
         "/api/v1/documents/{document_id}/link",

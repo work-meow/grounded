@@ -162,6 +162,67 @@ async def list_documents(
     return documents
 
 
+class Changed(BaseModel):
+    """One source and what moved in it."""
+
+    source_id: uuid.UUID
+    source_name: str
+    documents: list[DocumentOut]
+
+
+class ChangesOut(BaseModel):
+    days: int
+    #: Newest first, and only sources that had something change.
+    sources: list[Changed]
+    total: int
+
+
+@router.get("/changes")
+async def changes(
+    user_id: UserDep,
+    session: SessionDep,
+    settings: SettingsDep,
+    days: Annotated[int, Query(ge=1, le=365)] = 7,
+) -> ChangesOut:
+    """What was added or changed in the last few days, by source.
+
+    A knowledge base fed by Notion, Drive and a shared folder changes without
+    anybody watching, and the answer to "что я пропустил" was previously to
+    scroll a list of everything sorted by date and remember where you stopped.
+
+    A page and not a schedule: there is no job runner in this deployment, and
+    introducing one so that a summary could arrive by itself would be a large
+    piece of machinery for a question somebody asks on a Monday.
+    """
+    since = retriever.since(days)
+    documents = [
+        document
+        for document in await list_documents(user_id=user_id, session=session, settings=settings)
+        if since is None or document.created_at.timestamp() >= since
+    ]
+
+    grouped: dict[uuid.UUID, Changed] = {}
+    for document in documents:
+        group = grouped.get(document.source_id)
+        if group is None:
+            group = Changed(
+                source_id=document.source_id,
+                source_name=document.source_name,
+                documents=[],
+            )
+            grouped[document.source_id] = group
+        group.documents.append(document)
+
+    # Sources ordered by their most recent change, so the one that moved today
+    # is at the top rather than whichever happens to be first alphabetically.
+    order = sorted(
+        grouped.values(),
+        key=lambda group: max(document.created_at for document in group.documents),
+        reverse=True,
+    )
+    return ChangesOut(days=days, sources=order, total=len(documents))
+
+
 @router.post("", status_code=status.HTTP_201_CREATED)
 async def upload(
     file: UploadFile, user_id: UserDep, session: SessionDep, settings: SettingsDep

@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ApiError, api, type DocumentOut } from "@/lib/api";
+import { cn } from "@/lib/utils";
 
 import { ConnectedSources } from "./connected";
 
@@ -17,6 +18,7 @@ const POLL_MS = 3000;
 
 export default function SourcesPage() {
   const [documents, setDocuments] = useState<DocumentOut[]>([]);
+  const [loadedAt, setLoadedAt] = useState(0);
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
@@ -39,6 +41,10 @@ export default function SourcesPage() {
         const loaded = await api.documents();
         if (cancelled) return;
         setDocuments(loaded);
+        // When this list is current as of. Read here, in a callback, rather
+        // than during render: "изменилось за 7 дней" needs a clock, and a
+        // clock read while rendering makes the render depend on when it ran.
+        setLoadedAt(Date.now());
         setLoading(false);
         if (loaded.some((document) => document.status === "processing")) {
           timer = setTimeout(() => void load(false), POLL_MS);
@@ -122,6 +128,8 @@ export default function SourcesPage() {
 
         <ConnectedSources onChanged={refresh} />
 
+        {loadedAt > 0 && <Changes documents={documents} asOf={loadedAt} />}
+
         <section className="grid gap-3 sm:grid-cols-2">
           {loading ? (
             <>
@@ -142,6 +150,84 @@ export default function SourcesPage() {
       </div>
     </div>
   );
+}
+
+/**
+ * What moved lately, by source.
+ *
+ * A base fed by Notion, Drive and a shared folder changes without anybody
+ * watching, and the answer to "что я пропустил" was to scroll everything by
+ * date and remember where you stopped.
+ *
+ * Computed from the list already on screen rather than fetched: the server has
+ * an endpoint for callers who have no list, but this page has one, and a
+ * second request for a summary of what is already here would be a request for
+ * nothing.
+ */
+function Changes({ documents, asOf }: { documents: DocumentOut[]; asOf: number }) {
+  const [days, setDays] = useState(7);
+  const since = asOf - days * 24 * 3600 * 1000;
+
+  const grouped = new Map<string, DocumentOut[]>();
+  for (const document of documents) {
+    if (new Date(document.created_at).getTime() < since) continue;
+    const listed = grouped.get(document.source_name) ?? [];
+    listed.push(document);
+    grouped.set(document.source_name, listed);
+  }
+  // The source that moved most recently first, not whichever is alphabetically
+  // lucky.
+  const sources = [...grouped.entries()].sort(
+    (a, b) => newest(b[1]) - newest(a[1]),
+  );
+  const total = [...grouped.values()].reduce((sum, listed) => sum + listed.length, 0);
+
+  return (
+    <section className="space-y-2 rounded-lg border p-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h2 className="text-sm font-medium">Что изменилось</h2>
+        <div className="flex gap-1">
+          {[7, 30, 90].map((window) => (
+            <button
+              key={window}
+              type="button"
+              onClick={() => setDays(window)}
+              className={cn(
+                "rounded-md px-2 py-0.5 text-xs transition-colors",
+                days === window
+                  ? "bg-accent font-medium text-accent-foreground"
+                  : "text-muted-foreground hover:bg-accent/50 hover:text-foreground",
+              )}
+            >
+              {window} дн.
+            </button>
+          ))}
+        </div>
+      </div>
+      {total === 0 ? (
+        <p className="text-sm text-muted-foreground">За это время ничего не менялось.</p>
+      ) : (
+        <ul className="space-y-1 text-sm">
+          {sources.map(([name, listed]) => (
+            <li key={name} className="flex flex-wrap items-baseline gap-x-2">
+              <span className="text-muted-foreground">{name}:</span>
+              <span className="min-w-0 truncate">
+                {listed
+                  .slice(0, 3)
+                  .map((document) => document.filename)
+                  .join(", ")}
+                {listed.length > 3 && ` и ещё ${listed.length - 3}`}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}
+
+function newest(documents: DocumentOut[]): number {
+  return Math.max(...documents.map((document) => new Date(document.created_at).getTime()));
 }
 
 function DocumentCard({

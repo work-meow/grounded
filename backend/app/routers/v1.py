@@ -530,6 +530,23 @@ async def remove_document(
     )
 
 
+@router.get("/changes")
+async def changes(
+    user_id: UserDep,
+    session: SessionDep,
+    settings: SettingsDep,
+    days: Annotated[int, Query(ge=1, le=365, description="За сколько последних дней")] = 7,
+) -> sources_router.ChangesOut:
+    """What was added or changed lately, grouped by source.
+
+    For a base fed by Notion, Drive and a shared folder: the answer to "что я
+    пропустил" without scrolling everything by date. No model, nothing charged.
+    """
+    return await sources_router.changes(
+        user_id=user_id, session=session, settings=settings, days=days
+    )
+
+
 @router.get("/sources")
 async def list_sources(
     user_id: UserDep, session: SessionDep, settings: SettingsDep

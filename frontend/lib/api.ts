@@ -248,6 +248,9 @@ export const api = {
     return request<{ url: string }>(`/api/sources/${id}/link${query}`);
   },
 
+  /** What was added or changed lately, grouped by source. */
+  changes: (days = 7) => request<ChangesOut>(`/api/sources/changes?days=${days}`),
+
   connectors: () => request<ConnectorsOut>("/api/connectors"),
   addConnector: (kind: ConnectorKind, name: string, config: Record<string, string>) =>
     request<ConnectorOut>("/api/connectors", {
@@ -308,6 +311,20 @@ export type VerifyOut = {
   claims: ClaimOut[];
   usage: Usage;
   took_ms: number;
+};
+
+/** One source and what moved in it. */
+export type Changed = {
+  source_id: string;
+  source_name: string;
+  documents: DocumentOut[];
+};
+
+export type ChangesOut = {
+  days: number;
+  /** Newest first, and only sources that had something change. */
+  sources: Changed[];
+  total: number;
 };
 
 export type Step = { tool: string; query: string };

@@ -31,7 +31,7 @@ from langchain_core.tools import BaseTool, tool
 from langchain_openrouter import ChatOpenRouter
 from pydantic import SecretStr
 
-from app import relevance, retriever, websearch
+from app import expansion, relevance, retriever, websearch
 from app.config import Settings
 from app.models import Message
 from app.spend import ANSWER, Spend
@@ -317,7 +317,7 @@ def _build_tools(
         chunks = await relevance.keep_relevant(
             settings,
             query,
-            await retriever.retrieve(
+            await expansion.search(
                 settings, user_id, query, _candidates(settings), since=retriever.since(days)
             ),
             spend,
@@ -360,6 +360,10 @@ def _build_tools(
             target = UUID(document_id)
         except ValueError:
             return f"Некорректный document_id: {document_id}"
+        # Not expanded into several phrasings, unlike search_knowledge: this is
+        # already narrowed to one document, so there is far less for a
+        # rephrasing to find, and the extra call would be spent on every read.
+        #
         # No membership check: retrieve() filters on user_id *and* document_id,
         # so somebody else's document returns nothing rather than being refused.
         # Parsing to UUID first is the guard that matters — it is what keeps the

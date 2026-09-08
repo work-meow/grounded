@@ -105,6 +105,19 @@ class Settings(BaseSettings):
     # default and a wrong one for most people; set it to where you are.
     timezone: str = "UTC"
 
+    # --- asking the index more than one way -----------------------------------
+    # The first search of a turn is the question verbatim. The agent is already
+    # told to rephrase after a search comes back useless, but that costs a
+    # round trip and a judging pass to discover; this rephrases up front, on
+    # the grounds that BM25 and the embedder fail on different wordings and the
+    # judge should be choosing from the union.
+    #
+    # Off by default: it adds a cheap call to every search, and whether it
+    # earns that is a question for the eval set rather than for taste.
+    expand_queries: bool = False
+    # How many rewrites to keep besides the original.
+    expand_to: int = 2
+
     # --- relevance ------------------------------------------------------------
     # The index answers every query with its k best fragments whether or not any
     # of them is about the question. A second pass reads the candidates and says

@@ -17,7 +17,7 @@ import httpx
 from fastapi import APIRouter, HTTPException, Query, status
 from pydantic import BaseModel
 
-from app import relevance, retriever, search
+from app import expansion, relevance, retriever, search
 from app.config import Settings
 from app.deps import SettingsDep, UserDep
 
@@ -82,7 +82,7 @@ async def find(
 
     started = time.perf_counter()
     try:
-        candidates = await retriever.retrieve(
+        candidates = await expansion.search(
             settings,
             user_id,
             query,

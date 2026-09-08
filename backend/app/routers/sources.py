@@ -8,6 +8,7 @@ from the index, which is what makes "is it searchable yet?" answerable at all.
 
 import asyncio
 import logging
+import re
 import uuid
 from datetime import UTC, datetime
 from pathlib import PurePosixPath
@@ -15,7 +16,7 @@ from typing import Annotated
 
 import httpx
 from fastapi import APIRouter, HTTPException, Query, UploadFile, status
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from rag_shared.connectors import Kind
 from rag_shared.doc_key import build_key
 from rag_shared.formats import HUMAN_READABLE, mime_for
@@ -23,7 +24,7 @@ from sqlalchemy import delete as sql_delete
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app import anchor, connectors, pdf, retriever, storage
+from app import anchor, connectors, fetching, pdf, retriever, storage
 from app.config import Settings
 from app.deps import SessionDep, SettingsDep, UserDep
 from app.models import Document, Source
@@ -289,6 +290,88 @@ async def upload(
         removable=True,
         text_layer=document.text_layer,
     )
+
+
+class FromUrl(BaseModel):
+    url: str = Field(min_length=8, max_length=2000)
+
+
+@router.post("/url", status_code=status.HTTP_201_CREATED)
+async def add_url(
+    body: FromUrl, user_id: UserDep, session: SessionDep, settings: SettingsDep
+) -> DocumentOut:
+    """Index a web page by its address.
+
+    The page is fetched here, converted to text and written to the bucket as
+    markdown, so the indexer sees an object appear and treats it like any
+    upload — no new capability anywhere below this.
+
+    A refusal comes back as 400 with the reason in it: an unreachable host, a
+    login wall, a redirect chain, an address that points inside the network.
+    Those are all things the person who pasted the link can act on, unlike a
+    500.
+    """
+    try:
+        page = await fetching.fetch(settings, body.url)
+    except ValueError as exc:
+        # verify_public and the fetcher both speak in sentences meant for the
+        # person who typed the address.
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+    except httpx.HTTPError as exc:
+        logger.warning("could not fetch %r: %s", body.url[:120], type(exc).__name__)
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST, "Не удалось открыть страницу по этому адресу"
+        ) from exc
+
+    stored = fetching.as_markdown(page).encode()
+    if len(stored) > settings.max_upload_bytes:
+        raise HTTPException(
+            status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            f"Максимум {settings.max_upload_bytes // 1024 // 1024} МБ",
+        )
+
+    source = await _files_source(session, user_id)
+    document_id = uuid.uuid4()
+    filename = _filename(page.title)
+    key = build_key(user_id, source.id, document_id, filename)
+    await storage.put(settings, key, stored, "text/markdown")
+
+    document = Document(
+        id=document_id,
+        user_id=user_id,
+        source_id=source.id,
+        filename=filename,
+        s3_key=key,
+        mime_type="text/markdown",
+        size_bytes=len(stored),
+    )
+    session.add(document)
+    await session.commit()
+    await session.refresh(document)
+    return DocumentOut(
+        id=document.id,
+        filename=document.filename,
+        mime_type=document.mime_type,
+        size_bytes=document.size_bytes,
+        created_at=document.created_at,
+        status="processing",
+        source_id=source.id,
+        source_name=source.name,
+        removable=True,
+        text_layer=None,
+    )
+
+
+def _filename(title: str) -> str:
+    """A page's title as a filename.
+
+    The name matters more here than for an upload: it goes into the document's
+    first chunk as a heading, which is how a page is found by what it is called
+    rather than only by what it says.
+    """
+    cleaned = re.sub(r"[^\w\s.,()\[\]—-]+", "", title, flags=re.UNICODE).strip()
+    cleaned = " ".join(cleaned.split())[:120].rstrip(". ")
+    return f"{cleaned or 'Страница'}.md"
 
 
 async def _text_layer(mime_type: str, body: bytes) -> bool | None:

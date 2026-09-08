@@ -40,6 +40,16 @@ class Settings(BaseSettings):
     # store rather than a budget for a slow one.
     s3_timeout_s: int = 60
 
+    # --- fetching a page by its url -------------------------------------------
+    # Short: a page that takes longer than this to answer is one somebody is
+    # waiting on, and the request is holding a connection while it does.
+    fetch_timeout_s: float = 15.0
+    # Said honestly. A blank or forged agent is what gets a crawler blocked,
+    # and this one fetches a page a person asked for, one at a time.
+    fetch_user_agent: str = (
+        "grounded/1.0 (personal knowledge base; +https://github.com/work-meow/grounded)"
+    )
+
     # --- connected sources ----------------------------------------------------
     # Seals a connector's credentials before they reach the database or the
     # bucket (rag_shared.crypto). The same value as the indexer's SECRETS_KEY,

@@ -492,6 +492,28 @@ async def upload(
     )
 
 
+@router.post("/documents/url", status_code=status.HTTP_201_CREATED)
+async def add_url(
+    body: sources_router.FromUrl,
+    user_id: UserDep,
+    session: SessionDep,
+    settings: SettingsDep,
+) -> sources_router.DocumentOut:
+    """Index a web page by its address.
+
+    The page is fetched, converted to text and stored as markdown, then
+    indexed like any upload. Bounded: 15 s, 5 MB, at most three redirects —
+    and every redirect is checked against the same rule as the address you
+    sent, because a hop is an address the far end chose.
+
+    A refusal is a `400` with the reason in it: unreachable, a login wall, not
+    a page, or an address that points inside the network.
+    """
+    return await sources_router.add_url(
+        body=body, user_id=user_id, session=session, settings=settings
+    )
+
+
 @router.get("/documents/{document_id}/link")
 async def document_link(
     document_id: uuid.UUID,

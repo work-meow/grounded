@@ -248,6 +248,16 @@ export const api = {
     return request<{ url: string }>(`/api/sources/${id}/link${query}`);
   },
 
+  /** Fetch a web page and index it as a document. */
+  addUrl: (url: string) =>
+    request<DocumentOut>(
+      "/api/sources/url",
+      { method: "POST", body: JSON.stringify({ url }) },
+      // Fetching somebody else's page and storing it: longer than a listing,
+      // far shorter than an upload.
+      60_000,
+    ),
+
   /** What was added or changed lately, grouped by source. */
   changes: (days = 7) => request<ChangesOut>(`/api/sources/changes?days=${days}`),
 

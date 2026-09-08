@@ -16,6 +16,7 @@ from app.config import Settings
 from app.db import Session
 from app.deps import SessionDep, SettingsDep, UserDep
 from app.models import Chat, Message
+from app.spend import Spend
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +42,11 @@ class MessageOut(BaseModel):
     created_at: datetime
     #: 1, -1 or null. Only ever set on an answer.
     rating: int | None = None
+    #: What the turn did — steps, the bill, the fragments it was shown. Null
+    #: for answers written before this was recorded. Sent to the browser
+    #: because it is the difference between judging an answer and guessing at
+    #: it: what was searched, and what it cost.
+    trace: dict[str, Any] | None = None
 
 
 class MessagesOut(BaseModel):
@@ -141,6 +147,7 @@ async def list_messages(
                 citations=m.citations,
                 created_at=m.created_at,
                 rating=m.rating,
+                trace=m.trace,
             )
             for m in page
         ],
@@ -257,12 +264,16 @@ async def _stream(
     not, which is why the ``done`` event stays outside.
     """
     collected = conversation.Collected()
+    # The browser is not shown a bill, but the answer is stored with one: what
+    # a question cost is the kind of thing nobody can reconstruct afterwards,
+    # and it is two dictionary lookups per model call to keep.
+    spend = Spend()
     # Every event is relayed as it arrives, including both halves of a step —
     # the tool's name, then its query — because on a screen the earlier half is
     # worth showing at once. The collector is what remembers the answer itself.
     try:
         async for kind, payload in conversation.stream(
-            settings, user_id, question, history, web, collected
+            settings, user_id, question, history, web, collected, spend
         ):
             if kind in ("token", "step", "citations"):
                 yield _sse(kind, payload)
@@ -274,6 +285,11 @@ async def _stream(
         logger.exception("agent run failed for chat %s", chat_id)
         yield _sse("error", "Не удалось получить ответ. Попробуйте ещё раз.")
     finally:
-        await conversation.save_answer(chat_id, collected.text, collected.citations)
+        await conversation.save_answer(
+            chat_id,
+            collected.text,
+            collected.citations,
+            conversation.trace(collected.steps, collected.shown, spend.report()),
+        )
 
     yield _sse("done", {"citations": collected.citations})

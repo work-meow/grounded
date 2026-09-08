@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
+  Activity,
   Check,
   Copy,
   Globe,
@@ -29,6 +30,7 @@ import {
   type Citation,
   type MessageOut,
   type Step,
+  type Trace as TraceOut,
 } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
@@ -616,10 +618,75 @@ function Bubble({
             <Citations citations={message.citations} />
             <CopyButton text={message.content} />
             {chatId && <Rating chatId={chatId} messageId={message.id} was={message.rating} />}
+            <Trace trace={message.trace} />
           </div>
         )}
       </div>
     </div>
+  );
+}
+
+/** What the tool did, in the tense of a thing already done. */
+const DID_LABEL: Record<string, string> = {
+  search_knowledge: "искал в базе",
+  search_web: "искал в сети",
+  list_sources: "смотрел список документов",
+  read_document: "читал документ",
+};
+
+/**
+ * What this answer actually did, and what it cost.
+ *
+ * Folded away by default: the answer is the point, and a row of token counts
+ * above it would be noise. But the moment an answer looks wrong, the first
+ * question is what it searched for — and until now that was unanswerable
+ * once the stream had ended.
+ *
+ * Absent on answers written before any of this was recorded, which is most of
+ * them; the button simply does not appear.
+ */
+function Trace({ trace }: { trace?: TraceOut | null }) {
+  const [open, setOpen] = useState(false);
+  if (!trace || (!trace.steps.length && !trace.usage)) return null;
+
+  const cost = trace.usage?.cost_usd;
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => setOpen((was) => !was)}
+        aria-expanded={open}
+        className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-xs text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground"
+      >
+        <Activity className="size-3" />
+        {cost !== undefined ? `$${cost.toFixed(5)}` : "как получен"}
+      </button>
+      {open && (
+        <div className="w-full space-y-1 rounded-md border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+          {trace.steps.map((step, index) => (
+            <div key={`${step.tool}-${index}`} className="truncate">
+              {DID_LABEL[step.tool] ?? step.tool}
+              {step.query ? `: «${step.query}»` : ""}
+            </div>
+          ))}
+          <div>
+            показано фрагментов: {trace.shown.length}
+            {trace.usage
+              ? ` · токенов ${trace.usage.total_tokens} · вызовов ${trace.usage.calls}`
+              : ""}
+          </div>
+          {trace.usage && trace.usage.stages.length > 0 && (
+            <div className="truncate">
+              {trace.usage.stages
+                .map((stage) => `${stage.stage} $${stage.cost_usd.toFixed(5)}`)
+                .join(" · ")}
+              {/* A floor rather than the bill, when a provider said nothing. */}
+              {trace.usage.cost_complete ? "" : " (не полностью)"}
+            </div>
+          )}
+        </div>
+      )}
+    </>
   );
 }
 

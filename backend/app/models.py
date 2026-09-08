@@ -150,6 +150,15 @@ class Message(Base):
     # that a question somebody marked wrong is a question worth putting in the
     # eval set, and those are otherwise remembered by nobody.
     rating: Mapped[int | None] = mapped_column(SmallInteger)
+    # What the turn did: {"steps": [...], "shown": [...], "usage": {...}}, see
+    # conversation.trace(). Null for every answer written before this column
+    # existed, and for one the agent never finished.
+    #
+    # Here rather than in a table of its own because it is read exactly when
+    # the message is: to show under the answer what was searched and what it
+    # cost, and to turn a bad answer into a case that can be re-run. A join
+    # would buy nothing and cost a migration.
+    trace: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
     created_at: Mapped[datetime] = _created_at()
 
     chat: Mapped[Chat] = relationship(back_populates="messages")

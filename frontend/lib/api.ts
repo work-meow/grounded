@@ -156,6 +156,40 @@ export type MessagesPage = {
   next_cursor: string | null;
 };
 
+/** What one paid model call used, and what it cost. */
+export type UsageStage = {
+  stage: string;
+  model: string;
+  calls: number;
+  prompt_tokens: number;
+  completion_tokens: number;
+  cost_usd: number;
+};
+
+export type Usage = {
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+  cost_usd: number;
+  /** False when a call reported no price — then cost_usd is a floor. */
+  cost_complete: boolean;
+  calls: number;
+  stages: UsageStage[];
+};
+
+/**
+ * What the turn did, stored with the answer.
+ *
+ * `shown` is every fragment the model was handed, cited or not, and without
+ * its text — the cited ones carry their own snippets. Null on answers written
+ * before any of this was recorded.
+ */
+export type Trace = {
+  steps: Step[];
+  shown: { n: number; document_id: string | null; filename: string | null; page: number | null }[];
+  usage: Usage | null;
+};
+
 export type MessageOut = {
   id: string;
   role: "user" | "assistant";
@@ -164,6 +198,7 @@ export type MessageOut = {
   created_at: string;
   /** 1, -1 or null. Only ever set on an answer. */
   rating?: number | null;
+  trace?: Trace | null;
 };
 
 // --- endpoints ---------------------------------------------------------------

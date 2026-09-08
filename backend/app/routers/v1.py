@@ -227,7 +227,10 @@ async def answer(body: AnswerIn, user_id: UserDep, settings: SettingsDep) -> Any
             status.HTTP_502_BAD_GATEWAY, "Не удалось получить ответ. Попробуйте ещё раз."
         ) from exc
 
-    return _out(result, body.chat_id, await _persist(body.chat_id, result))
+    stored = await _persist(
+        body.chat_id, result, conversation.trace(result.steps, result.shown, result.usage)
+    )
+    return _out(result, body.chat_id, stored)
 
 
 def _sse(event: str, data: Any) -> str:
@@ -265,13 +268,18 @@ async def _events(
         logger.exception("the streamed turn failed for user %s", user_id)
         yield _sse("error", "Не удалось получить ответ. Попробуйте ещё раз.")
     finally:
-        message_id = await _persist(chat_id, collected)
+        message_id = await _persist(
+            chat_id,
+            collected,
+            conversation.trace(collected.steps, collected.shown, spend.report()),
+        )
 
     if failed:
         return
     result = conversation.Answer(
         text=collected.text,
         citations=collected.citations,
+        shown=collected.shown,
         steps=collected.steps,
         usage=spend.report(),
         took_ms=round((time.perf_counter() - started) * 1000),
@@ -283,16 +291,19 @@ async def _events(
 
 
 async def _persist(
-    chat_id: uuid.UUID | None, result: conversation.Answer | conversation.Collected
+    chat_id: uuid.UUID | None,
+    result: conversation.Answer | conversation.Collected,
+    trace: dict[str, Any],
 ) -> uuid.UUID | None:
     """Save the answer, if this question belonged to a stored chat.
 
     Takes either shape because a streamed turn only ever has the half-assembled
-    one: both carry the text and the citations, which is all a row needs.
+    one: both carry the text and the citations, which is all a row needs
+    besides the trace built by the caller that owns the bill.
     """
     if chat_id is None:
         return None
-    return await conversation.save_answer(chat_id, result.text, result.citations)
+    return await conversation.save_answer(chat_id, result.text, result.citations, trace)
 
 
 def _out(

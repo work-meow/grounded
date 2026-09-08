@@ -19,8 +19,8 @@ def saved(monkeypatch) -> list[tuple[str, list]]:
     """Capture what would be written to the messages table."""
     written: list[tuple[str, list]] = []
 
-    async def fake_save(chat_id, text, citations):
-        written.append((text, citations))
+    async def fake_save(chat_id, text, citations, trace=None):
+        written.append((text, citations, trace))
 
     monkeypatch.setattr(chats.conversation, "save_answer", fake_save)
     return written
@@ -57,7 +57,7 @@ async def test_completed_answer_is_streamed_and_saved(monkeypatch, saved):
     records = [record async for record in stream()]
 
     assert "event: done" in records[-1]
-    assert saved == [("45 дней", [{"n": 1}])]
+    assert [(text, citations) for text, citations, _ in saved] == [("45 дней", [{"n": 1}])]
 
 
 async def test_a_client_that_disappears_mid_answer_does_not_lose_it(monkeypatch, saved):
@@ -71,7 +71,7 @@ async def test_a_client_that_disappears_mid_answer_does_not_lose_it(monkeypatch,
     await anext(generator)  # one token reaches the client
     await generator.aclose()  # the browser tab closes
 
-    assert saved == [("начало", [])]
+    assert [(text, citations) for text, citations, _ in saved] == [("начало", [])]
 
 
 async def test_the_error_event_carries_no_internals(monkeypatch, saved):
@@ -83,5 +83,8 @@ async def test_the_error_event_carries_no_internals(monkeypatch, saved):
     error = next(record for record in records if record.startswith("event: error"))
 
     assert "postgresql" not in error and "hunter2" not in error
-    # The partial answer is still kept rather than thrown away with the failure.
-    assert saved == [("част", [])]
+    # The partial answer is still kept rather than thrown away with the failure,
+    # and so is its trace: a turn that broke is the one worth looking at later.
+    text, citations, trace = saved[0]
+    assert (text, citations) == ("част", [])
+    assert set(trace) == {"steps", "shown", "usage"}

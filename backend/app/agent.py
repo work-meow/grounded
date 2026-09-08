@@ -197,6 +197,23 @@ class _Citations:
         cited = {int(marker) for marker in _MARKER_RE.findall(answer)}
         return [item for item in self.items if item["n"] in cited]
 
+    def shown(self) -> list[dict[str, Any]]:
+        """Everything the model was handed, without the text of it.
+
+        Kept because precision is a question about the fragments a turn was
+        *given*, not the ones it used: eight retrieved and two cited is a
+        different search from three retrieved and two cited, and today only
+        the second number survives the turn.
+
+        A count does not need the text. The cited fragments already carry
+        their snippets, and twenty of those per message would be a table full
+        of prose nobody reads back.
+        """
+        return [
+            {key: item[key] for key in ("n", "document_id", "filename", "page")}
+            for item in self.items
+        ]
+
 
 def _candidates(settings: Settings) -> int:
     """How many fragments to ask the index for.
@@ -571,3 +588,7 @@ async def answer(
                 yield "token", text
 
     yield "citations", citations.referenced_in("".join(parts))
+    # After the citations, because every consumer written so far switches on the
+    # event names it knows and ignores the rest — this one is for whatever is
+    # recording the turn, not for the screen.
+    yield "shown", citations.shown()

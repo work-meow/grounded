@@ -44,6 +44,10 @@ class Answer:
     text: str
     #: The sources the answer's own [n] markers point at.
     citations: list[dict[str, Any]]
+    #: Every fragment the model was handed, cited or not, without its text.
+    #: The denominator of precision: eight shown and two cited is a different
+    #: search from three shown and two cited.
+    shown: list[dict[str, Any]]
     #: What the agent did on the way, in order.
     steps: list[dict[str, Any]]
     #: Tokens and dollars — see :mod:`app.spend`.
@@ -109,8 +113,30 @@ def as_history(turns: Sequence[tuple[str, str]]) -> list[Message]:
     return [Message(role=role, content=content, citations=[]) for role, content in turns]
 
 
+def trace(
+    steps: list[dict[str, Any]],
+    shown: list[dict[str, Any]],
+    usage: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """What the turn did, in the shape it is stored in.
+
+    Written once here rather than at each call site: three of them save an
+    answer, and a trace that means different things in different rows is worse
+    than no trace at all.
+
+    Deliberately not the answer's own text or its fragments' — those are the
+    two columns next to it. This is the part that used to be computed and
+    thrown away: which tools ran with which queries, what the provider
+    charged, and how many fragments the model was actually given.
+    """
+    return {"steps": steps, "shown": shown, "usage": usage}
+
+
 async def save_answer(
-    chat_id: uuid.UUID, text: str, citations: list[dict[str, Any]]
+    chat_id: uuid.UUID,
+    text: str,
+    citations: list[dict[str, Any]],
+    trace: dict[str, Any] | None = None,
 ) -> uuid.UUID | None:
     """Keep whatever was produced — a partial answer beats a lost turn.
 
@@ -125,7 +151,13 @@ async def save_answer(
         return None
     try:
         async with Session() as session:
-            message = Message(chat_id=chat_id, role="assistant", content=text, citations=citations)
+            message = Message(
+                chat_id=chat_id,
+                role="assistant",
+                content=text,
+                citations=citations,
+                trace=trace,
+            )
             session.add(message)
             await session.commit()
             return message.id
@@ -140,6 +172,7 @@ class Collected:
 
     parts: list[str] = field(default_factory=list)
     citations: list[dict[str, Any]] = field(default_factory=list)
+    shown: list[dict[str, Any]] = field(default_factory=list)
     steps: list[dict[str, Any]] = field(default_factory=list)
 
     @property
@@ -151,6 +184,8 @@ class Collected:
             self.parts.append(payload)
         elif kind == "citations":
             self.citations = payload
+        elif kind == "shown":
+            self.shown = payload
         elif kind == "step":
             self._step(payload)
 
@@ -216,6 +251,7 @@ async def run(
     return Answer(
         text=collected.text,
         citations=collected.citations,
+        shown=collected.shown,
         steps=collected.steps,
         usage=spend.report(),
         took_ms=round((time.perf_counter() - started) * 1000),

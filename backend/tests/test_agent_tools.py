@@ -163,4 +163,7 @@ async def test_a_turn_that_answers_is_left_alone(monkeypatch):
 
     events = [event async for event in agent.answer(settings, USER, "вопрос", [])]
     assert events[0] == ("token", "сорок")
-    assert events[-1][0] == "citations"
+    # The turn ends with what the answer cites, then with everything it was
+    # shown — the second is for whatever records the turn, and a consumer that
+    # only renders switches on the names it knows.
+    assert [kind for kind, _ in events[-2:]] == ["citations", "shown"]

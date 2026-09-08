@@ -55,11 +55,14 @@ def index(monkeypatch):
 
 
 def test_the_fragments_own_text_is_the_query(client, index):
+    """Its own words, shortened and stripped of anything the index's parser
+    owns — sending a fragment raw is what took the indexer down."""
     index([chunk("другой")])
 
     client.get("/api/v1/related", params={"text": TEXT})
 
-    assert index.asked == TEXT
+    assert index.asked.startswith("Основной ежегодный отпуск")
+    assert "`" not in index.asked
 
 
 def test_the_document_it_came_from_is_left_out(client, index):

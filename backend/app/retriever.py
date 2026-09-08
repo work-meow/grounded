@@ -68,32 +68,38 @@ async def _post(settings: Settings, path: str, payload: dict[str, Any]) -> Any:
     raise AssertionError("unreachable")  # pragma: no cover
 
 
-#: Characters the BM25 side of the index treats as query syntax. Tantivy's
-#: parser owns `+ - ! ( ) { } [ ] ^ " ~ * ? : \ / && ||`, and a string it
-#: cannot parse does not come back as an error — it **panics the engine
-#: thread**, which takes the whole indexer process down with it, for everybody.
+#: What a query may contain. Everything else becomes a space.
 #:
-#: Watched happen: a fragment of a markdown note sent back as a query
-#: ("# Памятка по линуксу --- #### 1 ... ``` sudo nano /etc/default/grub ```")
-#: crashed the indexer on every call, and the restarts showed up elsewhere as
-#: intermittent connection failures and "индекс перестраивается".
+#: An allowlist, and that is the whole point. A query the engine cannot parse
+#: does not come back as an error — it **panics the engine thread**, Pathway
+#: exits, and the indexer goes down for everybody until it restarts. Which
+#: characters do that is not something to guess at: the first attempt here was
+#: a blocklist of Tantivy's query syntax, it missed the backtick, and the
+#: crash survived it.
 #:
-#: So this is not politeness, it is the boundary: anything a person or a model
-#: typed goes through here before it reaches the index.
-_QUERY_SYNTAX = re.compile(r'[+\-!(){}\[\]^"~*?:\\/&|]+')
+#: The backtick is Pathway's own literal delimiter — the same syntax the tenant
+#: filter is built with (``user_id == `uuid` ``) — so the string is parsed as an
+#: expression before it is ever a search. Proven by narrowing it down on the
+#: deployment: "# тест" answers, "тест ``` тест" takes the process down, and
+#: plain words answer. Whatever else that parser owns is now moot.
+#:
+#: Kept: letters, digits, underscores, whitespace, and the punctuation that
+#: carries meaning inside a search term — a decimal comma, a percent, a dot in
+#: a filename. Everything else is dropped, and a search loses nothing by it.
+_ALLOWED = re.compile(r"[^\w\s.,%№]+", re.UNICODE)
 
 
 def searchable(query: str) -> str:
-    """A query with the index's own syntax taken out of it.
+    """A query the index is guaranteed to be able to parse.
 
-    Stripped rather than escaped. Escaping means agreeing with Tantivy about
-    what a backslash means through two layers that both rewrite strings, and
-    being wrong about that is a crash rather than a bad result. Removing the
-    characters is predictable, and what is lost is small: a question mark at
-    the end of a question, a hyphen inside a word, the punctuation of a code
-    block. None of those carry the meaning of a search.
+    An allowlist rather than a blocklist, because the failure is a crash and
+    not a bad result: being wrong about one character in a blocklist means the
+    whole index goes down, and being wrong in an allowlist means a query is
+    slightly coarser than it could have been.
+
+    Anything a person, a fragment or the model typed goes through here.
     """
-    return " ".join(_QUERY_SYNTAX.sub(" ", query).split())
+    return " ".join(_ALLOWED.sub(" ", query).split())
 
 
 def _tenant_filter(

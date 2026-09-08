@@ -31,6 +31,9 @@ const ENDPOINTS = [
   ["GET", "/api/v1/documents", "Всё, что доступно для поиска"],
   ["POST", "/api/v1/documents", "Загрузить файл (multipart/form-data)"],
   ["GET", "/api/v1/documents/{id}/link", "Где открыть оригинал, с ?page= и ?quote= — на нужном месте"],
+  ["POST", "/api/v1/documents/url", "Проиндексировать страницу по ссылке"],
+  ["GET", "/api/v1/changes", "Что добавилось и изменилось за последние дни, по источникам"],
+  ["GET", "/api/v1/related", "Другие фрагменты о том же — «где ещё об этом»"],
   ["DELETE", "/api/v1/documents/{id}", "Удалить загруженный файл"],
   ["GET", "/api/v1/sources", "Подключённые источники и их состояние"],
   ["POST", "/api/v1/chats", "Создать сохранённый диалог"],
@@ -465,6 +468,18 @@ while (true) {
             <Note>
               Формат, который мы не читаем, — это <code className="font-mono">415</code> сразу, а не
               документ, навсегда застрявший в статусе «индексируется».
+            </Note>
+            <Code>{`curl -X POST ${host}/api/v1/documents/url \\
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \\
+  -d '{"url": "https://example.com/статья"}'`}</Code>
+            <Note>
+              Страница по ссылке скачивается, превращается в текст и индексируется как обычная
+              загрузка. Границы: 15 секунд, 5 МБ (считается при чтении, а не по{" "}
+              <code className="font-mono">Content-Length</code>, которому нельзя верить), не больше
+              трёх переадресаций — и <b className="text-foreground">каждая переадресация
+              проверяется тем же правилом, что и присланный адрес</b>, потому что следующий адрес
+              выбирает уже не вызывающий. Отказ — <code className="font-mono">400</code> с причиной:
+              недоступен, страница за входом, не страница, адрес внутрь сети.
             </Note>
           </Section>
 

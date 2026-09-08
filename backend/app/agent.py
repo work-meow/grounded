@@ -18,7 +18,14 @@ from uuid import UUID
 from zoneinfo import ZoneInfo
 
 from langchain.agents import create_agent
-from langchain.agents.middleware import ModelCallLimitMiddleware, ToolCallLimitMiddleware
+from langchain.agents.middleware import (
+    ContextEditingMiddleware,
+    ModelCallLimitMiddleware,
+    ModelFallbackMiddleware,
+    ModelRetryMiddleware,
+    SummarizationMiddleware,
+    ToolCallLimitMiddleware,
+)
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 from langchain_core.tools import BaseTool, tool
 from langchain_openrouter import ChatOpenRouter
@@ -397,13 +404,19 @@ def _build_tools(
     return tools
 
 
-@lru_cache(maxsize=1)
+# Room for every distinct client a turn asks for — the answering model, the
+# fallback and the summariser — plus a couple spare. It was 1 while there was
+# one model, and when the other two arrived that silently turned into a cache
+# that evicted on every call: measured at hits=0, misses=4, which is three
+# fresh connection pools per question and exactly the leak this exists to
+# prevent. Bounded rather than unbounded because the key holds an api key.
+@lru_cache(maxsize=8)
 def _model(model: str, api_key: str, temperature: float, effort: str = "") -> ChatOpenRouter:
-    """One chat client for the whole process.
+    """One chat client per configuration, for the whole process.
 
-    Built per request, this would open a fresh HTTP connection pool on every
+    Built per request, each would open a fresh HTTP connection pool on every
     question and never close it. The client carries no per-user state — only
-    the tools do — so a single instance is safe to share.
+    the tools do — so an instance is safe to share.
     """
     reasoning = {"effort": effort} if effort else None
     # No timeout here, and not for want of trying: ChatOpenRouter takes both
@@ -465,7 +478,7 @@ def _query_of(args: str) -> str | None:
 
 
 def _limits(settings: Settings, web: bool) -> list[Any]:
-    """Ceilings on one turn.
+    """Ceilings on one turn, and what happens when a call fails inside it.
 
     Per tool as well as overall, and that is what makes the retry loop safe to
     ask for: the model is told to search again with different wording when the
@@ -477,7 +490,17 @@ def _limits(settings: Settings, web: bool) -> list[Any]:
             tool_name="search_knowledge",
             run_limit=settings.max_knowledge_searches_per_run,
             exit_behavior="continue",
-        )
+        ),
+        # Reading a document costs what a search costs — one request to the
+        # index and one call to the judge — and it was bounded only by the
+        # overall six. "Read it again, differently" was therefore looser than
+        # "search again, differently", which is the loop that was actually
+        # designed for.
+        ToolCallLimitMiddleware(
+            tool_name="read_document",
+            run_limit=settings.max_document_reads_per_run,
+            exit_behavior="continue",
+        ),
     ]
     if web:
         # Tighter, because this one costs real money per call rather than
@@ -495,6 +518,53 @@ def _limits(settings: Settings, web: bool) -> list[Any]:
     limits.append(
         ModelCallLimitMiddleware(run_limit=settings.max_model_calls_per_run, exit_behavior="end")
     )
+
+    # A blip at the provider used to cost the whole turn — an error event for
+    # the reader, a 502 for the API — while being exactly the kind of failure a
+    # second attempt fixes.
+    if settings.agent_retries:
+        limits.append(
+            ModelRetryMiddleware(
+                max_retries=settings.agent_retries,
+                backoff_factor=2.0,
+                # "error", not the default "continue". A provider that stays
+                # down would otherwise end the turn with an empty answer and
+                # no complaint — a 200 with nothing in it, which the caller
+                # cannot tell from "the base had no answer". Failing is what
+                # the error event and the 502 already exist for.
+                on_failure="error",
+            )
+        )
+    # And when it is down rather than slow, answering from the documents on
+    # something cheaper beats not answering. Passed as a built client and not
+    # as a name: a string goes through LangChain's init_chat_model, which knows
+    # nothing about OpenRouter and would ask for another provider's key.
+    if settings.agent_fallback_model:
+        limits.append(
+            ModelFallbackMiddleware(
+                _model(
+                    settings.agent_fallback_model,
+                    settings.openrouter_api_key,
+                    settings.agent_temperature,
+                )
+            )
+        )
+
+    # Twenty long messages arrive as most of a context window, and the oldest
+    # of them is the least likely to matter. Summarised rather than dropped:
+    # "как я говорил выше" has to keep meaning something.
+    limits.append(
+        SummarizationMiddleware(
+            model=_model(
+                settings.rerank_model, settings.openrouter_api_key, settings.agent_temperature
+            ),
+            trigger=("tokens", settings.history_summarise_above_tokens),
+        )
+    )
+    # Three searches of six fragments each is a large part of what the model
+    # reads, and the first search after two reformulations is rarely still
+    # needed. This prunes those results rather than the conversation.
+    limits.append(ContextEditingMiddleware())
     return limits
 
 

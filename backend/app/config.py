@@ -81,6 +81,22 @@ class Settings(BaseSettings):
     max_web_searches_per_run: int = 2
     max_tool_calls_per_run: int = 6
     max_model_calls_per_run: int = 8
+    max_document_reads_per_run: int = 3
+    # A provider that errors used to cost the whole turn: the reader saw an
+    # error event and the API a 502. Two retries with backoff cover the blip
+    # that a retry fixes; the fallback covers the model being down rather than
+    # slow, and answers from the documents on something cheaper instead of not
+    # at all. Empty disables the fallback.
+    #
+    # Retries spend the same budget as max_model_calls_per_run, deliberately:
+    # the ceiling is on what one turn may cost, and a turn that spent its
+    # calls on retries has still spent them.
+    agent_retries: int = 2
+    agent_fallback_model: str = "google/gemini-2.5-flash"
+    # History is replayed in full up to this many tokens, and summarised above
+    # it — twenty long messages otherwise arrive as most of a context window,
+    # and the oldest of them is the least likely to matter.
+    history_summarise_above_tokens: int = 12000
     # How much chat history is replayed into the agent each turn.
     history_window: int = 20
     # Whose today. A model knows nothing about the current date, and a personal

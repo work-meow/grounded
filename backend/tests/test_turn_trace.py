@@ -82,9 +82,7 @@ def test_the_shape_is_one_shape(monkeypatch):
     assert conversation.trace([], [], None) == {"steps": [], "shown": [], "usage": None}
 
 
-def test_the_api_stores_what_it_searched_what_it_saw_and_what_it_cost(
-    client, monkeypatch, saved
-):
+def test_the_api_stores_what_it_searched_what_it_saw_and_what_it_cost(client, monkeypatch, saved):
     monkeypatch.setattr(conversation.agent, "answer", agent_that_answers())
 
     client.post(

@@ -281,7 +281,9 @@ def test_the_web_is_bounded_more_tightly_than_the_index():
         if getattr(limit, "tool_name", None)
     }
 
-    assert set(per_tool) == {"search_knowledge", "search_web"}
+    # Reading a document is capped too, and for the same reason as searching:
+    # one request to the index plus one call to the judge.
+    assert set(per_tool) == {"search_knowledge", "read_document", "search_web"}
     assert len(agent._limits(settings(), web=False)) == len(limits) - 1
 
 

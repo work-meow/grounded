@@ -89,7 +89,7 @@ async def related(
     started = time.perf_counter()
     try:
         found = await retriever.retrieve(
-            settings, user_id, text.strip(), settings.rerank_candidates
+            settings, user_id, _as_query(text), settings.rerank_candidates
         )
     except httpx.HTTPError as exc:
         raise HTTPException(
@@ -116,6 +116,24 @@ async def related(
         ],
         took_ms=round((time.perf_counter() - started) * 1000),
     )
+
+
+#: Words of a fragment used as a query. A whole chunk is five hundred tokens
+#: of prose, most of it beside the point of what the fragment is *about* — and
+#: BM25 scores a long query by everything in it. The opening lines carry the
+#: heading and the subject.
+_QUERY_WORDS = 40
+
+
+def _as_query(text: str) -> str:
+    """A fragment reduced to something worth searching for.
+
+    Sanitised by `retriever.searchable` on the way to the index in any case —
+    a fragment is full of punctuation the query parser owns, and it crashed the
+    engine before that existed. This shortens it as well, which is a matter of
+    result quality rather than safety.
+    """
+    return " ".join(retriever.searchable(text).split()[:_QUERY_WORDS])
 
 
 def _candidates(settings: Settings, limit: int) -> int:

@@ -7,6 +7,7 @@ query is narrowed to one user before it leaves the process.
 
 import asyncio
 import logging
+import re
 import time
 from dataclasses import dataclass
 from typing import Any
@@ -65,6 +66,34 @@ async def _post(settings: Settings, path: str, payload: dict[str, Any]) -> Any:
             )
             await asyncio.sleep(wait)
     raise AssertionError("unreachable")  # pragma: no cover
+
+
+#: Characters the BM25 side of the index treats as query syntax. Tantivy's
+#: parser owns `+ - ! ( ) { } [ ] ^ " ~ * ? : \ / && ||`, and a string it
+#: cannot parse does not come back as an error — it **panics the engine
+#: thread**, which takes the whole indexer process down with it, for everybody.
+#:
+#: Watched happen: a fragment of a markdown note sent back as a query
+#: ("# Памятка по линуксу --- #### 1 ... ``` sudo nano /etc/default/grub ```")
+#: crashed the indexer on every call, and the restarts showed up elsewhere as
+#: intermittent connection failures and "индекс перестраивается".
+#:
+#: So this is not politeness, it is the boundary: anything a person or a model
+#: typed goes through here before it reaches the index.
+_QUERY_SYNTAX = re.compile(r'[+\-!(){}\[\]^"~*?:\\/&|]+')
+
+
+def searchable(query: str) -> str:
+    """A query with the index's own syntax taken out of it.
+
+    Stripped rather than escaped. Escaping means agreeing with Tantivy about
+    what a backslash means through two layers that both rewrite strings, and
+    being wrong about that is a crash rather than a bad result. Removing the
+    characters is predictable, and what is lost is small: a question mark at
+    the end of a question, a hyphen inside a word, the punctuation of a code
+    block. None of those carry the meaning of a search.
+    """
+    return " ".join(_QUERY_SYNTAX.sub(" ", query).split())
 
 
 def _tenant_filter(
@@ -225,7 +254,8 @@ async def retrieve(
         settings,
         "/v1/retrieve",
         {
-            "query": query,
+            # Never the raw string: see searchable().
+            "query": searchable(query),
             "k": k,
             "metadata_filter": _tenant_filter(user_id, document_id, source_id),
         },

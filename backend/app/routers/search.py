@@ -12,6 +12,7 @@ says where the words are.
 
 import time
 import uuid
+from typing import Annotated
 
 import httpx
 from fastapi import APIRouter, HTTPException, Query, status
@@ -59,6 +60,62 @@ class SearchOut(BaseModel):
     #: measured on the deployment, 50 ms when the query is cached upstream and
     #: 400 ms when it is not.
     took_ms: int
+
+
+class Related(BaseModel):
+    hits: list[Hit]
+    took_ms: int
+
+
+@router.get("/related")
+async def related(
+    user_id: UserDep,
+    settings: SettingsDep,
+    text: Annotated[str, Query(min_length=20, max_length=2000, description="Текст фрагмента")],
+    document_id: Annotated[uuid.UUID | None, Query(description="Исключить этот документ")] = None,
+    limit: Annotated[int, Query(ge=1, le=20)] = 5,
+) -> Related:
+    """Other fragments about the same thing as this one.
+
+    From a search hit or a citation: "где ещё об этом написано". No new index
+    capability is needed — /v1/retrieve takes a string and the fragment's own
+    text is the best possible query for finding things like it, which is what
+    a vector index is for.
+
+    The fragment's own document is excluded rather than filtered out
+    afterwards, because half a page of a long document is otherwise the whole
+    answer: a document is related to itself more than to anything else.
+    """
+    started = time.perf_counter()
+    try:
+        found = await retriever.retrieve(
+            settings, user_id, text.strip(), settings.rerank_candidates
+        )
+    except httpx.HTTPError as exc:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "Поиск сейчас недоступен, индекс перестраивается. Попробуйте через минуту.",
+        ) from exc
+
+    elsewhere = [chunk for chunk in found if str(chunk.document_id) != str(document_id)]
+    # One fragment per document: this answers "which other documents talk
+    # about this", and five fragments of one document is not that answer.
+    chunks = relevance.cap_per_document(elsewhere, 1)[:limit]
+    return Related(
+        hits=[
+            Hit(
+                document_id=chunk.document_id,
+                filename=chunk.filename,
+                page=chunk.page,
+                snippet=[
+                    Piece(text=piece, hit=marked)
+                    for piece, marked in search.snippet(chunk.text, text)
+                ],
+            )
+            for chunk in chunks
+        ],
+        took_ms=round((time.perf_counter() - started) * 1000),
+    )
 
 
 def _candidates(settings: Settings, limit: int) -> int:

@@ -447,6 +447,24 @@ async def find(
     )
 
 
+@router.get("/related")
+async def related(
+    user_id: UserDep,
+    settings: SettingsDep,
+    text: Annotated[str, Query(min_length=20, max_length=2000, description="Текст фрагмента")],
+    document_id: Annotated[uuid.UUID | None, Query(description="Исключить этот документ")] = None,
+    limit: Annotated[int, Query(ge=1, le=20)] = 5,
+) -> search_router.Related:
+    """Other fragments about the same thing as this one — «где ещё об этом».
+
+    The fragment's own text is the query, one hit per other document. No model
+    is involved and nothing is charged for it.
+    """
+    return await search_router.related(
+        user_id=user_id, settings=settings, text=text, document_id=document_id, limit=limit
+    )
+
+
 @router.get("/documents")
 async def list_documents(
     user_id: UserDep, session: SessionDep, settings: SettingsDep

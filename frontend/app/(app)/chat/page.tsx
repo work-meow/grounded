@@ -5,6 +5,7 @@ import {
   Activity,
   Check,
   Copy,
+  Download,
   Globe,
   Loader2,
   PanelLeft,
@@ -33,6 +34,7 @@ import {
   type Trace as TraceOut,
 } from "@/lib/api";
 import { staleness } from "@/lib/age";
+import { asMarkdown, download, filenameFor } from "@/lib/export";
 import { cn } from "@/lib/utils";
 
 /**
@@ -296,6 +298,21 @@ export default function ChatPage() {
     }
   }
 
+  function exportChat() {
+    // Only what is on screen. A conversation long enough to have been paged
+    // through would silently export half of itself, so say so rather than
+    // hand over a file that is quietly incomplete.
+    if (!messages.length) {
+      toast.error("В этом чате пока нечего сохранять");
+      return;
+    }
+    const title = chats.find((chat) => chat.id === activeId)?.title ?? "Разговор";
+    if (olderCursor) {
+      toast.info("Сохраняю то, что загружено — прокрутите вверх, чтобы добрать остальное");
+    }
+    download(filenameFor(title), asMarkdown(title, messages));
+  }
+
   async function removeChat(id: string) {
     try {
       await api.deleteChat(id);
@@ -320,6 +337,7 @@ export default function ChatPage() {
           onSelect={setActiveId}
           onCreate={newChat}
           onRemove={removeChat}
+          onExport={exportChat}
         />
       </aside>
 
@@ -458,12 +476,15 @@ function ChatList({
   onSelect,
   onCreate,
   onRemove,
+  onExport,
 }: {
   chats: ChatOut[];
   activeId: string | null;
   onSelect: (id: string) => void;
   onCreate: () => void | Promise<void>;
   onRemove: (id: string) => void;
+  /** Absent in the drawer, where the button would sit under the reader's thumb. */
+  onExport?: () => void;
 }) {
   return (
     <>
@@ -489,6 +510,21 @@ function ChatList({
             >
               {chat.title}
             </button>
+            {/* Only for the open chat: its messages are the ones already
+                loaded, and a download that first has to fetch a conversation
+                is one that sometimes does not happen. */}
+            {chat.id === activeId && onExport && (
+              <Button
+                variant="ghost"
+                size="icon"
+                className="size-7"
+                onClick={() => onExport()}
+                aria-label="Скачать разговор"
+                title="Скачать разговор в markdown"
+              >
+                <Download className="size-3.5" />
+              </Button>
+            )}
             <Button
               variant="ghost"
               size="icon"

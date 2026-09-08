@@ -109,6 +109,11 @@ services:
       # interrupted write left a zero-byte file that made every start fail
       # with "reader failed: 0 is not a valid match offset".
       CACHE_DIR: ${CACHE_DIR:-/data/cache}
+      # Puts one line in front of each chunk saying what it is part of. Costs
+      # a cheap call per batch at index time and re-embeds the corpus when
+      # turned on, so turn it on together with a fresh CACHE_DIR.
+      CONTEXTUAL_CHUNKS: ${CONTEXTUAL_CHUNKS:-false}
+      CONTEXT_MODEL: ${CONTEXT_MODEL:-google/gemini-2.5-flash-lite}
       PORT: "8666"
     volumes:
       - indexer-cache:/data
@@ -150,6 +155,15 @@ services:
       AGENT_MODEL: ${AGENT_MODEL}
       AGENT_REASONING_EFFORT: ${AGENT_REASONING_EFFORT:-minimal}
       TIMEZONE: ${TIMEZONE:-UTC}
+      # Everything below is off or unlimited unless set, and every one of them
+      # has to be named here or the setting silently does nothing: the
+      # container gets exactly this list, not the .env file.
+      #
+      # Asks the index the same question in two or three phrasings and merges
+      # the results. One cheap call per search.
+      EXPAND_QUERIES: ${EXPAND_QUERIES:-false}
+      # Dollars one token may spend in a UTC day; 0 is no ceiling.
+      DAILY_COST_LIMIT_USD: ${DAILY_COST_LIMIT_USD:-0}
       SECRETS_KEY: ${SECRETS_KEY}
       GDRIVE_SERVICE_ACCOUNT_EMAIL: ${GDRIVE_SERVICE_ACCOUNT_EMAIL:-}
       CORS_ORIGINS: '["https://${APP_DOMAIN}"]'

@@ -1,12 +1,21 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { CheckCircle2, FileText, Loader2, TriangleAlert, Trash2, Upload } from "lucide-react";
+import {
+  CheckCircle2,
+  FileText,
+  Link as LinkIcon,
+  Loader2,
+  TriangleAlert,
+  Trash2,
+  Upload,
+} from "lucide-react";
 import { toast } from "sonner";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ApiError, api, type DocumentOut } from "@/lib/api";
 import { cn } from "@/lib/utils";
@@ -19,6 +28,9 @@ const POLL_MS = 3000;
 export default function SourcesPage() {
   const [documents, setDocuments] = useState<DocumentOut[]>([]);
   const [loadedAt, setLoadedAt] = useState(0);
+  const [linking, setLinking] = useState(false);
+  const [url, setUrl] = useState("");
+  const [fetchingPage, setFetchingPage] = useState(false);
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
@@ -89,6 +101,26 @@ export default function SourcesPage() {
     refresh();
   }
 
+  async function addUrl() {
+    const address = url.trim();
+    if (!address || fetchingPage) return;
+    setFetchingPage(true);
+    try {
+      const added = await api.addUrl(address);
+      // The server's refusals are sentences meant for whoever pasted the link
+      // — an unreachable host, a login wall, an address inside the network —
+      // so they are shown as they came.
+      toast.success(`Добавлено: ${added.filename}`);
+      setUrl("");
+      setLinking(false);
+      refresh();
+    } catch (cause) {
+      toast.error(describe(cause));
+    } finally {
+      setFetchingPage(false);
+    }
+  }
+
   async function remove(document: DocumentOut) {
     // Guarded here as well as in the UI: a document from a connected source is
     // removed where it lives, and the API answers 404 for anything else.
@@ -120,11 +152,39 @@ export default function SourcesPage() {
             className="sr-only"
             onChange={(event) => void upload(event.target.files)}
           />
+          <Button variant="outline" onClick={() => setLinking((was) => !was)}>
+            <LinkIcon className="size-4" />
+            По ссылке
+          </Button>
           <Button onClick={() => fileInput.current?.click()} disabled={uploading}>
             {uploading ? <Loader2 className="size-4 animate-spin" /> : <Upload className="size-4" />}
             Загрузить
           </Button>
         </div>
+
+        {linking && (
+          <form
+            className="flex flex-wrap gap-2"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void addUrl();
+            }}
+          >
+            <Input
+              value={url}
+              onChange={(event) => setUrl(event.target.value)}
+              placeholder="https://example.com/статья"
+              type="url"
+              aria-label="Адрес страницы"
+              className="min-w-64 flex-1"
+              autoFocus
+            />
+            <Button type="submit" disabled={!url.trim() || fetchingPage}>
+              {fetchingPage && <Loader2 className="size-4 animate-spin" />}
+              {fetchingPage ? "Читаю…" : "Добавить"}
+            </Button>
+          </form>
+        )}
 
         <ConnectedSources onChanged={refresh} />
 

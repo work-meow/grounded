@@ -1,13 +1,16 @@
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any
 
 from sqlalchemy import (
     BigInteger,
     Boolean,
+    Date,
     DateTime,
     ForeignKey,
     Index,
+    Integer,
+    Numeric,
     SmallInteger,
     String,
     Text,
@@ -131,6 +134,34 @@ class Chat(Base):
     )
 
     __table_args__ = (Index("ix_chats_user_created", "user_id", "created_at"),)
+
+
+class Spending(Base):
+    """What one user was charged for in one day.
+
+    A day per row, added to as turns finish, so the ceiling can be checked
+    with one indexed read before a turn starts. Dollars rather than requests
+    because that is what is being protected: two questions can differ twenty
+    times in cost.
+
+    Not derived from `messages.trace` even though the same figure is there — a
+    question asked through the API without a chat is not stored anywhere, and
+    those are most of what an integration does.
+    """
+
+    __tablename__ = "spending"
+
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    #: Calendar day in UTC. One timezone for the window, deliberately: whose
+    #: midnight it is would otherwise depend on a setting that exists for the
+    #: agent's sense of "today", which is a different question.
+    day: Mapped[date] = mapped_column(Date, primary_key=True)
+    turns: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    #: Provider-reported, in dollars. Numeric and not float: this is money, and
+    #: it is added to thousands of times.
+    cost_usd: Mapped[float] = mapped_column(Numeric(12, 8), nullable=False, default=0)
 
 
 class Message(Base):

@@ -105,6 +105,17 @@ class Settings(BaseSettings):
     # default and a wrong one for most people; set it to where you are.
     timezone: str = "UTC"
 
+    # Dollars one token may spend in a UTC day, or 0 for no ceiling. Off by
+    # default: this is a personal install whose owner is the only caller, and
+    # a limit somebody did not ask for is a limit that surprises them. Worth
+    # setting the moment a token is handed to anything else — it never expires
+    # early, so a leaked one can spend in a loop.
+    #
+    # Checked before a turn and recorded after, so the last turn of a day can
+    # overshoot by its own cost. Refusing mid-answer would be worse, and
+    # reserving an estimate would mean inventing a price before it is known.
+    daily_cost_limit_usd: float = 0.0
+
     # --- asking the index more than one way -----------------------------------
     # The first search of a turn is the question verbatim. The agent is already
     # told to rephrase after a search comes back useless, but that costs a

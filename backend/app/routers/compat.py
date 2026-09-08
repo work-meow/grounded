@@ -46,6 +46,7 @@ from app import conversation
 from app.config import Settings
 from app.deps import SettingsDep, UserDep
 from app.models import Message
+from app.routers import v1 as v1_router
 from app.spend import Spend
 
 logger = logging.getLogger(__name__)
@@ -122,6 +123,7 @@ async def completions(body: CompletionIn, user_id: UserDep, settings: SettingsDe
     open web. ``stream`` behaves as OpenAI's does, ending with a usage chunk
     and ``data: [DONE]``.
     """
+    await v1_router.within_budget(settings, user_id)
     web = _web(body.model)
     question, history = _split(body.messages, settings)
     if not question:
@@ -160,6 +162,7 @@ async def completions(body: CompletionIn, user_id: UserDep, settings: SettingsDe
             status.HTTP_502_BAD_GATEWAY, "не удалось получить ответ", "upstream_error"
         ) from exc
 
+    await v1_router.charge(settings, user_id, result.usage)
     return {
         "id": _id(),
         "object": "chat.completion",
@@ -305,8 +308,10 @@ async def _chunks(
         yield _data("[DONE]")
         return
 
+    usage = spend.report()
+    await v1_router.charge(settings, user_id, usage)
     yield envelope(choices=[{"index": 0, "delta": {}, "finish_reason": "stop"}])
-    yield envelope(choices=[], usage=_usage(spend.report()), citations=collected.citations)
+    yield envelope(choices=[], usage=_usage(usage), citations=collected.citations)
     yield _data("[DONE]")
 
 

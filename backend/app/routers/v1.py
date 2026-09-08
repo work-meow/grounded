@@ -42,13 +42,14 @@ import logging
 import time
 import uuid
 from collections.abc import AsyncIterator
+from datetime import UTC, datetime
 from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, HTTPException, Query, UploadFile, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, model_validator
 
-from app import conversation
+from app import conversation, quota
 from app.config import Settings
 from app.db import Session
 from app.deps import SessionDep, SettingsDep, UserDep
@@ -188,6 +189,7 @@ async def answer(body: AnswerIn, user_id: UserDep, settings: SettingsDep) -> Any
     question = body.question.strip()
     if not question:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Пустой вопрос")
+    await within_budget(settings, user_id)
 
     if body.chat_id is None:
         history = conversation.as_history(
@@ -227,10 +229,41 @@ async def answer(body: AnswerIn, user_id: UserDep, settings: SettingsDep) -> Any
             status.HTTP_502_BAD_GATEWAY, "Не удалось получить ответ. Попробуйте ещё раз."
         ) from exc
 
+    await charge(settings, user_id, result.usage)
     stored = await _persist(
         body.chat_id, result, conversation.trace(result.steps, result.shown, result.usage)
     )
     return _out(result, body.chat_id, stored)
+
+
+async def within_budget(settings: Settings, user_id: uuid.UUID) -> None:
+    """Refuse before spending, when there is a ceiling and it is reached.
+
+    Its own short-lived session: the check is one indexed read and must not
+    hold a pooled connection across the turn that follows it.
+    """
+    if settings.daily_cost_limit_usd <= 0:
+        return
+    async with Session() as session:
+        await quota.refuse_if_spent(session, settings, user_id)
+
+
+async def charge(settings: Settings, user_id: uuid.UUID, usage: dict[str, Any]) -> None:
+    """Add what the turn cost to the day's total.
+
+    Never fatal: a turn that has already been answered must not fail over its
+    own bookkeeping. The cost of losing one record is that a ceiling is
+    slightly generous once.
+    """
+    if settings.daily_cost_limit_usd <= 0:
+        return
+    try:
+        async with Session() as session:
+            await quota.record(
+                session, user_id, float(usage.get("cost_usd") or 0.0), datetime.now(UTC).date()
+            )
+    except Exception:
+        logger.exception("could not record what a turn cost for %s", user_id)
 
 
 def _sse(event: str, data: Any) -> str:
@@ -268,10 +301,10 @@ async def _events(
         logger.exception("the streamed turn failed for user %s", user_id)
         yield _sse("error", "Не удалось получить ответ. Попробуйте ещё раз.")
     finally:
+        usage = spend.report()
+        await charge(settings, user_id, usage)
         message_id = await _persist(
-            chat_id,
-            collected,
-            conversation.trace(collected.steps, collected.shown, spend.report()),
+            chat_id, collected, conversation.trace(collected.steps, collected.shown, usage)
         )
 
     if failed:
@@ -281,7 +314,7 @@ async def _events(
         citations=collected.citations,
         shown=collected.shown,
         steps=collected.steps,
-        usage=spend.report(),
+        usage=usage,
         took_ms=round((time.perf_counter() - started) * 1000),
     )
     yield _sse("usage", result.usage)

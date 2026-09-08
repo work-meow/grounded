@@ -133,7 +133,15 @@ def pair(rows: Sequence[Row]) -> list[Turn]:
             continue
         if _asked_nothing_of_the_documents(trace):
             continue
-        names = [str(item.get("filename") or "") for item in citations or []]
+        names = _documents(citations)
+        if _only_from_the_web(citations):
+            # The answer came off the open web. Its "source" is a page title,
+            # and asking the document index to return that is a question with
+            # no right answer — measured once as 10/27 before this was here,
+            # with several of the misses being questions about today's bitcoin
+            # price. A web question is a fine question; it is not a retrieval
+            # case.
+            continue
         turns.append(
             Turn(
                 ask=ask,
@@ -144,6 +152,26 @@ def pair(rows: Sequence[Row]) -> list[Turn]:
             )
         )
     return turns
+
+
+def _documents(citations: list | None) -> list[str]:
+    """Filenames of the cited fragments that came from the knowledge base.
+
+    A citation with a url and no document_id is a page from the open web. It
+    has a title, the title looks like a filename, and nothing in the index
+    will ever match it.
+    """
+    return [
+        str(item.get("filename") or "")
+        for item in citations or []
+        if isinstance(item, dict) and item.get("document_id")
+    ]
+
+
+def _only_from_the_web(citations: list | None) -> bool:
+    """Whether every source under this answer was a web page."""
+    listed = [item for item in citations or [] if isinstance(item, dict)]
+    return bool(listed) and not any(item.get("document_id") for item in listed)
 
 
 def _asked_nothing_of_the_documents(trace: dict | None) -> bool:

@@ -27,6 +27,9 @@ _spec.loader.exec_module(harvest)
 WHEN = datetime(2026, 9, 1, tzinfo=UTC)
 
 SEARCHED = {"steps": [{"tool": "search_knowledge", "query": "отпуск"}]}
+#: A citation into the knowledge base: a document_id is what distinguishes one
+#: from a page off the open web, whose title merely looks like a filename.
+DOC = [{"filename": "Политика.pdf", "document_id": "d1"}]
 
 
 def row(chat, role, content, citations=(), *, rating=None, trace=None, when=WHEN):
@@ -48,7 +51,7 @@ def test_a_question_is_paired_with_the_answer_that_followed_it():
     chat = uuid4()
     rows = [
         row(chat, "user", "сколько дней отпуска?"),
-        row(chat, "assistant", "28 дней", [{"filename": "Политика.pdf"}], trace=SEARCHED),
+        row(chat, "assistant", "28 дней", DOC, trace=SEARCHED),
     ]
 
     [found] = harvest.pair(rows)
@@ -64,7 +67,7 @@ def test_a_question_is_never_paired_across_a_chat_boundary():
     first, second = uuid4(), uuid4()
     rows = [
         row(first, "user", "вопрос без ответа в первом чате"),
-        row(second, "assistant", "ответ из другого чата", [{"filename": "Чужое.md"}]),
+        row(second, "assistant", "ответ из другого чата", DOC),
     ]
 
     assert harvest.pair(rows) == []
@@ -72,7 +75,7 @@ def test_a_question_is_never_paired_across_a_chat_boundary():
 
 def test_an_answer_whose_question_was_deleted_is_skipped():
     chat = uuid4()
-    rows = [row(chat, "assistant", "ответ", [{"filename": "Х.md"}])]
+    rows = [row(chat, "assistant", "ответ", DOC)]
 
     assert harvest.pair(rows) == []
 
@@ -90,6 +93,48 @@ def test_an_answer_that_cited_nothing_becomes_a_negative_case():
     [found] = harvest.pair(rows)
 
     assert found.empty is True and found.finds == ""
+
+
+def test_an_answer_that_came_off_the_web_is_not_a_retrieval_case():
+    """Its source is a page title, and asking the document index to return that
+    is a question with no right answer. Measured before this rule: several
+    misses in the baseline were questions about today's bitcoin price."""
+    chat = uuid4()
+    rows = [
+        row(chat, "user", "сколько стоит биткоин прямо сейчас?"),
+        row(
+            chat,
+            "assistant",
+            "около $95 000 [1]",
+            [{"filename": "bitcoin Price Today | Binance.US", "url": "https://binance.us/"}],
+            trace={"steps": [{"tool": "search_web", "query": "bitcoin price"}]},
+        ),
+    ]
+
+    assert harvest.pair(rows) == []
+
+
+def test_a_document_and_a_web_page_together_keep_the_document():
+    """An answer leaning on both is still a retrieval case — for the half the
+    index is responsible for."""
+    chat = uuid4()
+    rows = [
+        row(chat, "user", "что в вишлисте и сколько стоит биткоин?"),
+        row(
+            chat,
+            "assistant",
+            "наушники [1], около $95 000 [2]",
+            [
+                {"filename": "Wishlist.md", "document_id": "d9"},
+                {"filename": "Binance.US", "url": "https://binance.us/"},
+            ],
+            trace=SEARCHED,
+        ),
+    ]
+
+    [found] = harvest.pair(rows)
+    assert found.finds == "Wishlist.md"
+    assert found.empty is False
 
 
 def test_a_question_that_never_reached_the_documents_is_not_a_gap():

@@ -11,9 +11,10 @@ import logging
 import uuid
 from datetime import UTC, datetime
 from pathlib import PurePosixPath
+from typing import Annotated
 
 import httpx
-from fastapi import APIRouter, HTTPException, UploadFile, status
+from fastapi import APIRouter, HTTPException, Query, UploadFile, status
 from pydantic import BaseModel
 from rag_shared.connectors import Kind
 from rag_shared.doc_key import build_key
@@ -22,7 +23,7 @@ from sqlalchemy import delete as sql_delete
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app import connectors, pdf, retriever, storage
+from app import anchor, connectors, pdf, retriever, storage
 from app.config import Settings
 from app.deps import SessionDep, SettingsDep, UserDep
 from app.models import Document, Source
@@ -242,15 +243,26 @@ async def _text_layer(mime_type: str, body: bytes) -> bool | None:
 
 @router.get("/{document_id}/link")
 async def document_link(
-    document_id: uuid.UUID, user_id: UserDep, session: SessionDep, settings: SettingsDep
+    document_id: uuid.UUID,
+    user_id: UserDep,
+    session: SessionDep,
+    settings: SettingsDep,
+    page: Annotated[int | None, Query(ge=1, le=10_000)] = None,
+    quote: Annotated[str | None, Query(max_length=400)] = None,
 ) -> dict[str, str]:
-    """Where to open the original.
+    """Where to open the original, and where in it.
 
     One endpoint for both populations, so a citation chip does not have to know
     which kind of document it points at: an upload gets a presigned link to our
     bucket, a document from a connected source gets the service's own page for
     it. The index is consulted only when there is no row, which is the only case
     that needs it.
+
+    ``page`` and ``quote`` come from the citation the reader clicked and turn
+    into a fragment on the end of the url — ``#page=3`` for a PDF, a text
+    fragment for anything a browser renders as text. Both are hints: a viewer
+    that does not understand one ignores it, and the link is what it was
+    before. See :mod:`app.anchor`.
     """
     document = (
         await session.execute(
@@ -258,18 +270,36 @@ async def document_link(
         )
     ).scalar_one_or_none()
     if document is not None:
-        return {"url": await storage.presigned_url(settings, document.s3_key)}
+        signed = await storage.presigned_url(settings, document.s3_key)
+        return {"url": _anchored(signed, document.mime_type, page, quote)}
 
     found = (await _indexed(settings, user_id)).get(str(document_id))
     if found is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Документ не найден")
     if found.web_url:
+        # Somebody else's page: it has its own idea of where things are, and a
+        # fragment we invented would at best do nothing.
         return {"url": found.web_url}
     if (signed := await _signed(settings, session, user_id, found)) is not None:
-        return {"url": signed}
+        return {"url": _anchored(signed, mime_for(found.filename), page, quote)}
     raise HTTPException(
         status.HTTP_404_NOT_FOUND, "У этого документа нет ссылки, которую можно открыть"
     )
+
+
+def _anchored(url: str, mime_type: str | None, page: int | None, quote: str | None) -> str:
+    """The link with a place in it, if this format has a way of saying one.
+
+    A page number for a PDF, since that is the only format here paginated at
+    all; a text fragment for the formats a browser renders as text. Office
+    files get neither: the browser downloads them and hands them to an
+    application that never saw the url.
+    """
+    if mime_type == "application/pdf":
+        return anchor.at_page(url, page)
+    if mime_type in ("text/plain", "text/markdown") and quote:
+        return anchor.at_quote(url, quote)
+    return url
 
 
 async def _signed(

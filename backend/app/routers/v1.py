@@ -375,11 +375,28 @@ async def upload(
 
 @router.get("/documents/{document_id}/link")
 async def document_link(
-    document_id: uuid.UUID, user_id: UserDep, session: SessionDep, settings: SettingsDep
+    document_id: uuid.UUID,
+    user_id: UserDep,
+    session: SessionDep,
+    settings: SettingsDep,
+    page: Annotated[int | None, Query(ge=1, le=10_000, description="Открыть на странице")] = None,
+    quote: Annotated[
+        str | None, Query(max_length=400, description="Открыть на этих словах")
+    ] = None,
 ) -> dict[str, str]:
-    """Where to open the original: a presigned link, or the service's own page."""
+    """Where to open the original: a presigned link, or the service's own page.
+
+    Pass a citation's `page` or `snippet` back and the link opens there —
+    `#page=3` for a PDF, a text fragment for markdown and plain text. Both are
+    hints a viewer may ignore; neither can make the link worse.
+    """
     return await sources_router.document_link(
-        document_id=document_id, user_id=user_id, session=session, settings=settings
+        document_id=document_id,
+        user_id=user_id,
+        session=session,
+        settings=settings,
+        page=page,
+        quote=quote,
     )
 
 

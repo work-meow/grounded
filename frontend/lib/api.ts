@@ -225,7 +225,20 @@ export const api = {
   },
   deleteDocument: (id: string) =>
     request<void>(`/api/sources/${id}`, { method: "DELETE" }),
-  documentLink: (id: string) => request<{ url: string }>(`/api/sources/${id}/link`),
+  /**
+   * Where to open a document, and where in it.
+   *
+   * `page` and `quote` come straight off the citation that was clicked; the
+   * server turns them into `#page=3` or a text fragment. A viewer that does
+   * not understand the fragment ignores it, so passing them can only help.
+   */
+  documentLink: (id: string, at?: { page?: number | null; quote?: string | null }) => {
+    const params = new URLSearchParams();
+    if (at?.page) params.set("page", String(at.page));
+    if (at?.quote) params.set("quote", at.quote);
+    const query = params.size ? `?${params}` : "";
+    return request<{ url: string }>(`/api/sources/${id}/link${query}`);
+  },
 
   connectors: () => request<ConnectorsOut>("/api/connectors"),
   addConnector: (kind: ConnectorKind, name: string, config: Record<string, string>) =>

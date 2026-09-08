@@ -222,7 +222,12 @@ function Row({ hit }: { hit: SearchHit }) {
   async function open() {
     if (!hit.document_id) return;
     try {
-      const { url } = await api.documentLink(hit.document_id);
+      // The hit's own words, so the document opens at the match rather than
+      // at the top — which is the whole reason somebody clicked this row.
+      const { url } = await api.documentLink(hit.document_id, {
+        page: hit.page,
+        quote: hit.snippet.map((piece) => piece.text).join(""),
+      });
       window.open(url, "_blank", "noopener,noreferrer");
     } catch (cause) {
       toast.error(describe(cause));

@@ -802,7 +802,12 @@ function Citations({ citations }: { citations: Citation[] }) {
     }
     if (!citation.document_id) return;
     try {
-      const { url } = await api.documentLink(citation.document_id);
+      // The page and the words the answer quoted, so the document opens where
+      // it was quoted from rather than at its first line.
+      const { url } = await api.documentLink(citation.document_id, {
+        page: citation.page,
+        quote: citation.snippet,
+      });
       window.open(url, "_blank", "noopener,noreferrer");
     } catch (cause) {
       toast.error(describe(cause));

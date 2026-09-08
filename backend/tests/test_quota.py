@@ -56,9 +56,7 @@ async def test_nothing_is_refused_when_there_is_no_ceiling():
 
 
 async def test_a_turn_under_the_ceiling_goes_ahead():
-    await quota.refuse_if_spent(
-        Recorded(spent=0.4), settings(daily_cost_limit_usd=1.0), uuid4()
-    )
+    await quota.refuse_if_spent(Recorded(spent=0.4), settings(daily_cost_limit_usd=1.0), uuid4())
 
 
 async def test_a_spent_day_is_refused_with_how_long_to_wait():

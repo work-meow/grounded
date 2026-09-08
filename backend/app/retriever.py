@@ -5,6 +5,8 @@ the retrieval itself. This module's only real job is tenant isolation: every
 query is narrowed to one user before it leaves the process.
 """
 
+import asyncio
+import logging
 import time
 from dataclasses import dataclass
 from typing import Any
@@ -15,6 +17,8 @@ from rag_shared.doc_key import parse_key, user_prefix
 
 from app import http
 from app.config import Settings
+
+logger = logging.getLogger(__name__)
 
 # A pooled connection the indexer has already closed fails on first use, before
 # the request is written: httpx reports RemoteProtocolError, and the caller sees
@@ -29,10 +33,22 @@ from app.config import Settings
 # fresh, which is exactly what the failure asks for.
 _STALE_CONNECTION = (httpx.RemoteProtocolError, httpx.ConnectError)
 
+#: Waits between attempts, and the reason there are waits at all. The two
+#: attempts used to run back to back, so a window of even a few hundred
+#: milliseconds swallowed both — observed in production right after the
+#: indexer's container had been recreated: "All connection attempts failed"
+#: twice in a row, and the turn died. A moved container needs a moment, not a
+#: second try in the same instant.
+#:
+#: Deliberately short and deliberately not enough to cover a restart, which
+#: takes six or seven seconds: that is what the search page's "индекс
+#: перестраивается" exists to say, and holding a request open through it would
+#: be worse than saying so.
+_BACKOFF_S = (0.2, 0.6)
+
 
 async def _post(settings: Settings, path: str, payload: dict[str, Any]) -> Any:
-    attempts = 2
-    for attempt in range(1, attempts + 1):
+    for attempt, wait in enumerate((*_BACKOFF_S, None)):
         try:
             response = await http.client().post(
                 f"{settings.pathway_url}{path}",
@@ -42,8 +58,12 @@ async def _post(settings: Settings, path: str, payload: dict[str, Any]) -> Any:
             response.raise_for_status()
             return response.json()
         except _STALE_CONNECTION:
-            if attempt == attempts:
+            if wait is None:
                 raise
+            logger.info(
+                "the index did not answer (attempt %d); retrying in %.1fs", attempt + 1, wait
+            )
+            await asyncio.sleep(wait)
     raise AssertionError("unreachable")  # pragma: no cover
 
 

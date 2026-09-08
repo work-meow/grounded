@@ -48,6 +48,37 @@ class IndexerSettings(BaseSettings):
     # boundary is still retrievable from either side.
     chunk_overlap: int = 60
 
+    # --- context on each chunk ------------------------------------------------
+    # A chunk from the middle of a policy reading only "28 календарных дней"
+    # does not say it is about leave, so it is findable by meaning and by luck.
+    # The document's name is already prepended, but only to the first chunk of
+    # each part — putting it on all of them would dilute every embedding. This
+    # instead asks a cheap model what each chunk is part of and puts that
+    # sentence in front of it, which lands in both the vector and the BM25
+    # index.
+    #
+    # Off by default: it changes what is indexed, so turning it on re-embeds
+    # the corpus, and it costs a call per batch of chunks at index time.
+    contextual_chunks: bool = False
+    context_model: str = "google/gemini-2.5-flash-lite"
+    # Chunks described in one call. Parts here are usually a page or a short
+    # file — one or two chunks — so batching means one call per part instead of
+    # one per chunk, and the document's text is paid for once rather than N
+    # times.
+    context_batch: int = 8
+    # How many parts may be described at once. Indexing is not on anybody's
+    # critical path, and a restart re-reads everything, so this is politeness
+    # to the provider rather than a latency budget.
+    context_concurrency: int = 4
+    # Beyond this many chunks a part is left alone. A four-thousand-page
+    # document would otherwise be several hundred calls before anybody noticed.
+    context_max_chunks: int = 40
+    # How much of the part the model reads as context. A page of PDF is well
+    # under this; a long markdown file is truncated, and its beginning is the
+    # part that says what the document is.
+    context_document_chars: int = 6000
+    context_timeout_s: float = 30.0
+
     # --- server ---------------------------------------------------------------
     host: str = "0.0.0.0"
     port: int = 8666

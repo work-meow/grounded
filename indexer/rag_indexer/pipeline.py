@@ -30,13 +30,14 @@ from pathway.stdlib.indexing import (
 from pathway.xpacks.llm.document_store import DocumentStore
 from pathway.xpacks.llm.embedders import OpenAIEmbedder
 from pathway.xpacks.llm.servers import DocumentStoreServer
-from pathway.xpacks.llm.splitters import RecursiveSplitter
+from pathway.xpacks.llm.splitters import BaseSplitter, RecursiveSplitter
 from rag_shared.connectors import ConnectorSpec
 from rag_shared.doc_key import tenant_metadata
 
 from rag_indexer import health, manifest
 from rag_indexer.config import IndexerSettings
 from rag_indexer.connectors import build_tables
+from rag_indexer.contextual import ContextualSplitter
 from rag_indexer.parsers import parse_document
 
 logger = logging.getLogger(__name__)
@@ -118,6 +119,30 @@ def title_heading(text: str, metadata: dict) -> tuple[str, dict]:
     return f"# {name}\n\n{text}", metadata
 
 
+def _splitter(settings: IndexerSettings) -> BaseSplitter | ContextualSplitter:
+    """How a part becomes chunks.
+
+    Recursive, not TokenCount: it splits on paragraph and sentence boundaries
+    before falling back to raw length, so a heading is not welded onto the body
+    of the section below it. Measured against TokenCountSplitter, which merged
+    both and left no overlap.
+
+    With CONTEXTUAL_CHUNKS on, the same splitter is wrapped by one that also
+    writes a line in front of each chunk saying what it is part of — the
+    splitter being the only place in Pathway's pipeline where chunks exist and
+    the index has not been built yet. See rag_indexer/contextual.py.
+    """
+    inner = RecursiveSplitter(
+        chunk_size=settings.chunk_size,
+        chunk_overlap=settings.chunk_overlap,
+        encoding_name="cl100k_base",
+    )
+    if not settings.contextual_chunks:
+        return inner
+    logger.info("describing chunks with %s before indexing them", settings.context_model)
+    return ContextualSplitter(inner, settings)
+
+
 def build_store(settings: IndexerSettings, specs: list[ConnectorSpec]) -> DocumentStore:
     # Must happen before the embedder is constructed: Pathway builds the OpenAI
     # client itself and never forwards a base URL, so this env var is the only
@@ -162,15 +187,7 @@ def build_store(settings: IndexerSettings, specs: list[ConnectorSpec]) -> Docume
         docs=build_tables(settings, specs, health.BucketReporter(settings)),
         retriever_factory=retriever_factory,
         parser=pw.udf(parse_document),
-        # Recursive, not TokenCount: it splits on paragraph and sentence
-        # boundaries before falling back to raw length, so a heading is not
-        # welded onto the body of the section below it. Measured against
-        # TokenCountSplitter, which merged both and left no overlap.
-        splitter=RecursiveSplitter(
-            chunk_size=settings.chunk_size,
-            chunk_overlap=settings.chunk_overlap,
-            encoding_name="cl100k_base",
-        ),
+        splitter=_splitter(settings),
         # Order matters: tenant_metadata is what puts `filename` in metadata,
         # and title_heading reads it from there.
         doc_post_processors=[tenant_metadata, title_heading],
